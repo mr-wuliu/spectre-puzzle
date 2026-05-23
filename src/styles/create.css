@@ -1,0 +1,137 @@
+/* ============================================
+   Create Page Styles
+   ============================================ */
+
+/* ---- Control groups in sidebar ---- */
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.control-group:last-child {
+  border-bottom: none;
+}
+
+.control-group label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ---- Radio group for tile type ---- */
+.radio-group {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 0.875rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.radio-group input[type="radio"] {
+  accent-color: var(--color-accent);
+}
+
+/* ---- Range slider ---- */
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+.range-value {
+  font-size: 0.8125rem;
+  color: var(--color-text);
+  font-weight: 600;
+  min-width: 1.5em;
+  text-align: right;
+}
+
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+/* ---- Checkbox ---- */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 0.875rem;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.checkbox-label input[type="checkbox"] {
+  accent-color: var(--color-accent);
+}
+
+/* ---- Sidebar button stack ---- */
+.sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.sidebar-actions .btn {
+  width: 100%;
+}
+
+.btn-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-row .btn {
+  flex: 1;
+}
+
+.btn-active {
+  background-color: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-frame);
+}
+
+/* ---- Status bar items ---- */
+.status-bar .status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.status-bar .status-item + .status-item::before {
+  content: '|';
+  color: var(--color-border);
+  margin: 0 var(--spacing-xs);
+}
+
+/* ---- Canvas wrapper ensures full stretch ---- */
+.canvas-area {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.canvas-area canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}

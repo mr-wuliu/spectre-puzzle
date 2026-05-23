@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spectre Puzzle - Solve</title>
+  <link rel="stylesheet" href="/src/styles/cardboard.css">
+  <link rel="stylesheet" href="/src/styles/layout.css">
+  <link rel="stylesheet" href="/src/styles/solve.css">
+</head>
+<body>
+  <div class="page-container">
+    <header class="page-header">
+      <h1>Solve Puzzle</h1>
+      <div class="solve-toolbar">
+        <button class="btn btn-primary" id="btn-import">Import</button>
+        <button class="btn" id="btn-solution">Show Solution</button>
+        <button class="btn" id="btn-reset">Reset</button>
+        <button class="btn" id="btn-save">Save Image</button>
+      </div>
+      <nav>
+        <a href="/" class="btn">Home</a>
+        <a href="/create.html" class="btn">Create</a>
+      </nav>
+    </header>
+    <main class="page-main">
+      <div class="split-layout">
+        <div class="canvas-area" id="canvas-area">
+          <canvas id="main-canvas"></canvas>
+        </div>
+        <aside class="sidebar-right sidebar">
+          <div class="tray-header">
+            Piece Tray (<span class="tray-count" id="tray-count">0</span>)
+          </div>
+          <div id="piece-tray"></div>
+          <div class="sidebar-section">
+            <div class="tray-header">
+              Saved Puzzles (<span id="puzzle-list-count">0</span>)
+            </div>
+            <div id="puzzle-list"></div>
+          </div>
+        </aside>
+      </div>
+    </main>
+    <footer class="status-bar">
+      <span class="status-item" id="status-pieces">Pieces: 0 / 0</span>
+    </footer>
+  </div>
+  <input type="file" id="file-input" accept=".spectre-puzzle.json,.json" hidden>
+  <script type="module" src="/src/pages/solve.ts"></script>
+</body>
+</html>

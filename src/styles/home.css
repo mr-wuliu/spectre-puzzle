@@ -1,0 +1,193 @@
+/* ============================================
+   Home Page Styles
+   ============================================ */
+
+/* ---- Layout ---- */
+.home-container {
+  position: relative;
+  z-index: 1;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: var(--spacing-lg) var(--spacing-md);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ---- Hero Section ---- */
+.hero {
+  text-align: center;
+  padding: var(--spacing-xl) 0 var(--spacing-lg);
+  position: relative;
+  width: 100%;
+}
+
+/* Subtle aperiodic tiling pattern overlay */
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.07;
+  background:
+    repeating-linear-gradient(
+      60deg,
+      transparent,
+      transparent 12px,
+      rgba(74, 60, 40, 0.5) 12px,
+      rgba(74, 60, 40, 0.5) 13px
+    ),
+    repeating-linear-gradient(
+      -60deg,
+      transparent,
+      transparent 12px,
+      rgba(74, 60, 40, 0.5) 12px,
+      rgba(74, 60, 40, 0.5) 13px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 20px,
+      rgba(74, 60, 40, 0.3) 20px,
+      rgba(74, 60, 40, 0.3) 21px
+    );
+  border-radius: var(--radius-lg);
+}
+
+.hero-title {
+  font-size: 3.25rem;
+  font-weight: 700;
+  color: var(--color-text);
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.15),
+    0 2px 4px rgba(74, 60, 40, 0.15);
+  letter-spacing: -0.02em;
+  position: relative;
+}
+
+.hero-subtitle {
+  font-size: 1.125rem;
+  color: var(--color-text-secondary);
+  margin-top: var(--spacing-sm);
+  font-weight: 400;
+  position: relative;
+}
+
+/* ---- Navigation Cards ---- */
+.nav-cards {
+  display: flex;
+  gap: var(--spacing-lg);
+  width: 100%;
+  margin-top: var(--spacing-xl);
+}
+
+.nav-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--spacing-xl) var(--spacing-lg);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.15s ease;
+  background-image:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.06) 0%,
+      transparent 40%,
+      transparent 60%,
+      rgba(74, 60, 40, 0.04) 100%
+    );
+}
+
+.nav-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+  background-color: var(--color-surface-hover);
+  text-decoration: none;
+  color: inherit;
+}
+
+.nav-card:active {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.nav-card-icon {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: var(--spacing-md);
+}
+
+.nav-card-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--spacing-sm);
+}
+
+.nav-card-desc {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+/* ---- About Section ---- */
+.about-section {
+  margin-top: var(--spacing-xl);
+  padding: var(--spacing-lg);
+  width: 100%;
+  max-width: 640px;
+  text-align: center;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  background-image:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.06) 0%,
+      transparent 40%,
+      transparent 60%,
+      rgba(74, 60, 40, 0.04) 100%
+    );
+}
+
+.about-section h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--spacing-sm);
+}
+
+.about-section p {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+/* ---- Responsive: stack cards on narrow screens ---- */
+@media (max-width: 560px) {
+  .nav-cards {
+    flex-direction: column;
+    gap: var(--spacing-md);
+  }
+
+  .hero-title {
+    font-size: 2.5rem;
+  }
+
+  .nav-card {
+    padding: var(--spacing-lg) var(--spacing-md);
+  }
+}

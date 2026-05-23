@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spectre Puzzle - Create</title>
+  <link rel="stylesheet" href="/src/styles/cardboard.css">
+  <link rel="stylesheet" href="/src/styles/layout.css">
+  <link rel="stylesheet" href="/src/styles/create.css">
+  <link rel="stylesheet" href="/src/styles/curve-editor.css">
+</head>
+<body>
+  <div class="page-container">
+    <header class="page-header">
+      <h1>Create Puzzle</h1>
+      <nav>
+        <a href="/" class="btn">Home</a>
+        <a href="/solve.html" class="btn">Solve</a>
+      </nav>
+    </header>
+    <main class="page-main">
+      <div class="split-layout">
+        <aside class="sidebar-left sidebar" id="sidebar">
+          <div class="control-group">
+            <label>Tile Type</label>
+            <div class="radio-group">
+              <label><input type="radio" name="tile-type" value="hat"> Hat</label>
+              <label><input type="radio" name="tile-type" value="spectre" checked> Spectre</label>
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="shape-slider">Shape: Hat ← → Spectre</label>
+            <div class="range-row">
+              <input type="range" id="shape-slider" min="0" max="100" value="100" step="1" disabled>
+              <span class="range-value" id="shape-value">Spectre</span>
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="depth-slider">Generation Depth</label>
+            <div class="range-row">
+              <input type="range" id="depth-slider" min="1" max="4" value="2" step="1">
+              <span class="range-value" id="depth-value">2</span>
+            </div>
+          </div>
+          <div class="control-group" id="curved-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="curved-edges"> Curved Edges (Spectre only)
+            </label>
+          </div>
+          <div class="control-group" id="curve-editor-group" style="display:none;">
+            <button class="btn" id="btn-edit-curve">Edit Curve...</button>
+            <span class="hint-text" id="curve-status">No custom curve</span>
+          </div>
+          <div class="control-group sidebar-actions">
+            <button class="btn btn-primary" id="btn-generate">Generate</button>
+            <button class="btn" id="btn-select">Select Mode</button>
+            <div class="btn-row">
+              <button class="btn" id="btn-local-save">Save</button>
+              <button class="btn btn-primary" id="btn-export">Export</button>
+            </div>
+          </div>
+        </aside>
+        <div class="canvas-area" id="canvas-area">
+          <canvas id="main-canvas"></canvas>
+        </div>
+      </div>
+    </main>
+    <footer class="status-bar" id="status-bar">
+      <span class="status-item" id="status-tiles">Tiles: 0</span>
+      <span class="status-item" id="status-selected">Selected: 0</span>
+      <span class="status-item" id="status-mode">Mode: Pan</span>
+    </footer>
+  </div>
+  <div id="curve-editor-modal" class="modal-overlay" style="display:none;"></div>
+  <script type="module" src="/src/pages/create.ts"></script>
+</body>
+</html>
