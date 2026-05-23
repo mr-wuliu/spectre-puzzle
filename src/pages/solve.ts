@@ -15,6 +15,7 @@ import type { EdgeCurveData } from '../tiling/curved';
 import { createCurvyShape, createCurvyShapeFromCurve } from '../tiling/curved';
 import {
   createSceneTransform,
+  sceneToScreen,
   screenToScene,
   applyToCtx,
 } from '../render/renderer';
@@ -79,6 +80,10 @@ let pieceColorMap = new Map<number, { fill: string; stroke: string }>();
 let curvedEdges = false;
 let curveData: EdgeCurveData | null = null;
 let trashDropActive = false;
+let gameStarted = false;
+let timerStartMs = 0;
+let elapsedMs = 0;
+let timerIntervalId: number | null = null;
 const anim = new AnimationManager();
 
 function pieceColor(id: number, poly: Polygon): { fill: string; stroke: string } {
@@ -197,6 +202,8 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void 
 
   ctx.restore();
 
+  drawStartOverlay(ctx, canvas);
+  drawTimer(ctx);
   drawTrashDropZone(ctx, canvas);
   ctx.restore();
 }
@@ -217,12 +224,12 @@ function drawFrame(
     for (let i = 1; i < verts.length; i++) path.lineTo(verts[i].x, verts[i].y);
     path.closePath();
 
-    const boundaryLoops = curvedEdges ? [] : buildBoundaryLoops(frameTilePolys);
+    const boundaryLoops = gameStarted && !curvedEdges ? buildBoundaryLoops(frameTilePolys) : [];
     if (boundaryLoops.length > 0) {
       for (const loop of boundaryLoops) {
         addLoopToPath(path, loop);
       }
-    } else {
+    } else if (gameStarted) {
       for (const ftp of frameTilePolys) {
         const tilePath = buildPiecePath(ftp);
         path.addPath(tilePath);
@@ -232,7 +239,7 @@ function drawFrame(
     ctx.fillStyle = 'rgba(232, 220, 200, 0.3)';
     ctx.fill(path, 'evenodd');
 
-    if (curvedEdges) {
+    if (gameStarted && curvedEdges) {
       drawFrameTileBoundary(ctx, frameTilePolys);
     } else if (boundaryLoops.length > 0) {
       drawBoundaryLoops(ctx, boundaryLoops);
@@ -570,6 +577,120 @@ function drawMarquee(ctx: CanvasRenderingContext2D, marquee: MarqueeInfo): void 
   ctx.restore();
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function currentElapsedMs(): number {
+  return gameStarted ? elapsedMs + performance.now() - timerStartMs : elapsedMs;
+}
+
+function frameScreenPoints(): Point[] {
+  if (!puzzle) return [];
+  return puzzle.framePolygon.vertices.map((v) => sceneToScreen(sceneXform, v.x, v.y));
+}
+
+function frameScreenBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const pts = frameScreenPoints();
+  if (pts.length === 0) return null;
+  return pts.reduce(
+    (acc, p) => ({
+      minX: Math.min(acc.minX, p.x),
+      minY: Math.min(acc.minY, p.y),
+      maxX: Math.max(acc.maxX, p.x),
+      maxY: Math.max(acc.maxY, p.y),
+    }),
+    { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
+  );
+}
+
+function getStartButtonHitCircle(): { x: number; y: number; r: number } | null {
+  const bounds = frameScreenBounds();
+  if (!bounds) return null;
+  const w = bounds.maxX - bounds.minX;
+  const h = bounds.maxY - bounds.minY;
+  return {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: (bounds.minY + bounds.maxY) / 2,
+    r: Math.max(34, Math.min(58, Math.min(w, h) * 0.13)),
+  };
+}
+
+function drawStartOverlay(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+  if (!puzzle || gameStarted || won) return;
+  const pts = frameScreenPoints();
+  const button = getStartButtonHitCircle();
+  if (pts.length < 3 || !button) return;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.clip();
+
+  const { w, h } = canvasLogicalSize(canvas);
+  ctx.filter = 'blur(5px)';
+  ctx.fillStyle = 'rgba(238, 229, 211, 0.78)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.filter = 'none';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+  for (let y = 0; y < h; y += 8) {
+    ctx.fillRect(0, y, w, 1);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(button.x, button.y, button.r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(139, 105, 20, 0.88)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  const triW = button.r * 0.62;
+  const triH = button.r * 0.78;
+  ctx.beginPath();
+  ctx.moveTo(button.x - triW * 0.32, button.y - triH / 2);
+  ctx.lineTo(button.x - triW * 0.32, button.y + triH / 2);
+  ctx.lineTo(button.x + triW * 0.48, button.y);
+  ctx.closePath();
+  ctx.fillStyle = '#fff';
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawTimer(ctx: CanvasRenderingContext2D): void {
+  if (!puzzle || (!gameStarted && elapsedMs === 0)) return;
+  const bounds = frameScreenBounds();
+  if (!bounds) return;
+  const text = formatElapsed(currentElapsedMs());
+  const x = (bounds.minX + bounds.maxX) / 2;
+  const y = Math.max(12, bounds.minY - 42);
+
+  ctx.save();
+  ctx.font = '700 22px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const metrics = ctx.measureText(text);
+  const boxW = Math.max(88, metrics.width + 28);
+  const boxH = 34;
+  ctx.fillStyle = 'rgba(245, 238, 224, 0.9)';
+  ctx.strokeStyle = 'rgba(91, 63, 31, 0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x - boxW / 2, y, boxW, boxH, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#3f3320';
+  ctx.fillText(text, x, y + boxH / 2);
+  ctx.restore();
+}
+
 function getCanvasPoint(e: PointerEvent | DragEvent, canvas: HTMLCanvasElement): Point {
   const rect = canvas.getBoundingClientRect();
   return {
@@ -602,6 +723,7 @@ function isInTrashDropZone(canvasPt: Point, canvas: HTMLCanvasElement): boolean 
 }
 
 function drawTrashDropZone(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+  if (!gameStarted || won) return;
   const rect = getTrashDropZoneRect(canvas);
   const cx = rect.x + rect.size / 2;
   const cy = rect.y + rect.size / 2;
@@ -944,11 +1066,16 @@ function updateTray(): void {
     card.appendChild(label);
 
     card.addEventListener('click', () => {
+      if (!gameStarted) return;
       selectedTrayPieceKind = selectedTrayPieceKind === group.kind ? null : group.kind;
       updateTraySelection();
     });
 
     thumbCanvas.addEventListener('dragstart', (e) => {
+      if (!gameStarted) {
+        e.preventDefault();
+        return;
+      }
       selectedTrayPieceKind = group.kind;
       e.dataTransfer?.setData('text/plain', `puzzle-piece-kind:${group.kind}`);
       e.dataTransfer?.setData('application/x-puzzle-piece-kind', group.kind);
@@ -978,6 +1105,37 @@ function updateStatusBar(): void {
   const placed = puzzle.pieces.filter((p) => p.isPlaced).length;
   const el = document.getElementById('status-pieces');
   if (el) el.textContent = `Pieces: ${placed} / ${total}`;
+}
+
+function resetTimer(): void {
+  if (timerIntervalId !== null) {
+    window.clearInterval(timerIntervalId);
+    timerIntervalId = null;
+  }
+  gameStarted = false;
+  timerStartMs = 0;
+  elapsedMs = 0;
+}
+
+function startPuzzleTimer(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+  if (gameStarted || won) return;
+  gameStarted = true;
+  timerStartMs = performance.now();
+  if (timerIntervalId !== null) window.clearInterval(timerIntervalId);
+  timerIntervalId = window.setInterval(() => render(ctx, canvas), 250);
+  render(ctx, canvas);
+}
+
+function stopPuzzleTimer(): void {
+  if (gameStarted) {
+    elapsedMs += performance.now() - timerStartMs;
+  }
+  gameStarted = false;
+  timerStartMs = 0;
+  if (timerIntervalId !== null) {
+    window.clearInterval(timerIntervalId);
+    timerIntervalId = null;
+  }
 }
 
 function renderPuzzleList(
@@ -1089,6 +1247,7 @@ function loadPuzzleFromModel(
   puzzle = loaded;
   initialJSON = json;
   won = false;
+  resetTimer();
   selectedTrayPieceKind = null;
   dragInfo = null;
   rotateDragInfo = null;
@@ -1124,6 +1283,7 @@ function handleImport(
       puzzle = importPuzzle(text);
       initialJSON = text;
       won = false;
+      resetTimer();
       selectedTrayPieceKind = null;
       dragInfo = null;
       rotateDragInfo = null;
@@ -1218,15 +1378,26 @@ function trySnap(
   piece.transform = finalTransform;
   updateTray();
   updateStatusBar();
-  checkWinAndRender();
+  checkWinAndRender(ctx, canvas);
   render(ctx, canvas);
 }
 
-function checkWinAndRender(): void {
+function checkWinAndRender(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+): void {
   if (!puzzle || won) return;
   const result = checkWinCondition(puzzle);
   if (result.isComplete) {
+    stopPuzzleTimer();
     won = true;
+    dragInfo = null;
+    rotateDragInfo = null;
+    marqueeInfo = null;
+    trashDropActive = false;
+    hoveredPieceId = null;
+    clearSelection();
+    render(ctx, canvas);
     showVictoryOverlay();
   }
 }
@@ -1244,7 +1415,7 @@ function showVictoryOverlay(): void {
   h2.textContent = 'Puzzle Complete!';
 
   const p = document.createElement('p');
-  p.textContent = 'Congratulations! You solved the puzzle.';
+  p.textContent = `Congratulations! You solved the puzzle in ${formatElapsed(elapsedMs)}.`;
 
   const actions = document.createElement('div');
   actions.className = 'victory-actions';
@@ -1331,7 +1502,7 @@ function showSolution(
 
   updateTray();
   updateStatusBar();
-  checkWinAndRender();
+  checkWinAndRender(ctx, canvas);
 }
 
 function doReset(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
@@ -1339,6 +1510,7 @@ function doReset(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void
   anim.cancelAll();
   puzzle = importPuzzle(initialJSON);
   won = false;
+  resetTimer();
   selectedTrayPieceKind = null;
   dragInfo = null;
   rotateDragInfo = null;
@@ -1384,6 +1556,20 @@ function onPointerDown(
   }
 
   if (e.button !== 0) return;
+
+  if (!gameStarted) {
+    const canvasPt = getCanvasPoint(e, canvas);
+    const button = getStartButtonHitCircle();
+    if (button) {
+      const dx = canvasPt.x - button.x;
+      const dy = canvasPt.y - button.y;
+      if (dx * dx + dy * dy <= button.r * button.r) {
+        startPuzzleTimer(ctx, canvas);
+      }
+    }
+    e.preventDefault();
+    return;
+  }
 
   const scenePt = toScene(e, canvas);
 
@@ -1594,6 +1780,7 @@ function onPointerUp(
 ): void {
   if (rotateDragInfo !== null) {
     rotateDragInfo = null;
+    checkWinAndRender(ctx, canvas);
     render(ctx, canvas);
     return;
   }
@@ -1619,7 +1806,11 @@ function onPointerUp(
   if (piece && drag.groupIds.length <= 1) {
     trySnap(piece, ctx, canvas);
     refreshSelectionFrame();
+  } else {
+    checkWinAndRender(ctx, canvas);
+    refreshSelectionFrame();
   }
+  checkWinAndRender(ctx, canvas);
   render(ctx, canvas);
 }
 
@@ -1665,10 +1856,12 @@ document.addEventListener('DOMContentLoaded', () => {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   canvas.addEventListener('dragover', (e) => {
+    if (!gameStarted) return;
     e.preventDefault();
     e.dataTransfer!.dropEffect = 'move';
   });
   canvas.addEventListener('drop', (e) => {
+    if (!gameStarted) return;
     e.preventDefault();
     const data = e.dataTransfer?.getData('text/plain');
     const rawKind = e.dataTransfer?.getData('application/x-puzzle-piece-kind')

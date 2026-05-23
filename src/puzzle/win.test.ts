@@ -55,6 +55,116 @@ describe('checkWinCondition', () => {
     expect(result.allInsideFrame).toBe(true);
   });
 
+  it('treats vertices exactly on the frame boundary as inside', () => {
+    const sq = unitSquare();
+    const piece = createPiece(0, sq, transform.identity(), [1, 2, 3, 4]);
+    piece.isPlaced = true;
+
+    const frame = polygon.create([
+      point.create(0, 0),
+      point.create(1, 0),
+      point.create(1, 1),
+      point.create(0, 1),
+    ]);
+
+    const result = checkWinCondition(createPuzzleModel([piece], frame));
+    expect(result.allInsideFrame).toBe(true);
+    expect(result.isComplete).toBe(true);
+  });
+
+  it('uses frame tile area instead of the outer frame rectangle when available', () => {
+    const sq = unitSquare();
+    const pieceA = createPiece(0, sq, transform.identity(), [1, 2, 3, 4]);
+    const pieceB = createPiece(1, sq, transform.translation(1, 0), [5, 6, 7, 8]);
+    pieceA.isPlaced = true;
+    pieceB.isPlaced = true;
+
+    const outerFrame = polygon.create([
+      point.create(0, 0),
+      point.create(3, 0),
+      point.create(3, 2),
+      point.create(0, 2),
+    ]);
+    const frameTiles = [
+      sq,
+      polygon.translate(sq, 1, 0),
+    ];
+
+    const result = checkWinCondition(createPuzzleModel(
+      [pieceA, pieceB],
+      outerFrame,
+      undefined,
+      frameTiles,
+    ));
+
+    expect(result.areaMatch).toBe(true);
+    expect(result.isComplete).toBe(true);
+  });
+
+  it('does not complete when all pieces are inside but not in their solution positions', () => {
+    const sq = unitSquare();
+    const pieceA = createPiece(0, sq, transform.translation(1, 0), [1, 2, 3, 4]);
+    const pieceB = createPiece(1, sq, transform.identity(), [5, 6, 7, 8]);
+    pieceA.isPlaced = true;
+    pieceB.isPlaced = true;
+
+    const frame = polygon.create([
+      point.create(0, 0),
+      point.create(2, 0),
+      point.create(2, 1),
+      point.create(0, 1),
+    ]);
+    const solutionMap = new Map([
+      [0, transform.identity()],
+      [1, transform.translation(1, 0)],
+    ]);
+
+    const result = checkWinCondition(createPuzzleModel(
+      [pieceA, pieceB],
+      frame,
+      solutionMap,
+    ));
+
+    expect(result.allPlaced).toBe(true);
+    expect(result.areaMatch).toBe(true);
+    expect(result.allInsideFrame).toBe(true);
+    expect(result.solutionMatch).toBe(false);
+    expect(result.isComplete).toBe(false);
+  });
+
+  it('allows interchangeable tray pieces to match any target frame tile', () => {
+    const sq = unitSquare();
+    const pieceA = createPiece(0, sq, transform.translation(1, 0), [1, 2, 3, 4]);
+    const pieceB = createPiece(1, polygon.translate(sq, 1, 0), transform.translation(-1, 0), [5, 6, 7, 8]);
+    pieceA.isPlaced = true;
+    pieceB.isPlaced = true;
+
+    const frame = polygon.create([
+      point.create(0, 0),
+      point.create(2, 0),
+      point.create(2, 1),
+      point.create(0, 1),
+    ]);
+    const frameTiles = [
+      sq,
+      polygon.translate(sq, 1, 0),
+    ];
+    const solutionMap = new Map([
+      [0, transform.identity()],
+      [1, transform.identity()],
+    ]);
+
+    const result = checkWinCondition(createPuzzleModel(
+      [pieceA, pieceB],
+      frame,
+      solutionMap,
+      frameTiles,
+    ));
+
+    expect(result.solutionMatch).toBe(true);
+    expect(result.isComplete).toBe(true);
+  });
+
   it('returns allPlaced=false when one piece is unplaced', () => {
     const model = solvedTwoPieceModel();
     model.pieces[0].isPlaced = false;
