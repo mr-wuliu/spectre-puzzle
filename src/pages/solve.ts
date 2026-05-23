@@ -83,6 +83,7 @@ let trashDropActive = false;
 let gameStarted = false;
 let timerStartMs = 0;
 let elapsedMs = 0;
+let timerFrozen = false;
 let timerIntervalId: number | null = null;
 const anim = new AnimationManager();
 
@@ -138,6 +139,7 @@ function resizeCanvas(canvas: HTMLCanvasElement): void {
   canvas.style.height = `${rect.height}px`;
   const ctx = canvas.getContext('2d');
   if (ctx) ctx.scale(dpr, dpr);
+  updateTimerPosition();
 }
 
 function canvasLogicalSize(canvas: HTMLCanvasElement): { w: number; h: number } {
@@ -167,6 +169,7 @@ function centerView(canvas: HTMLCanvasElement): void {
     centerY: 0,
     rotation: 0,
   });
+  updateTimerPosition();
 }
 
 function toScene(e: PointerEvent, canvas: HTMLCanvasElement): Point {
@@ -203,7 +206,6 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void 
   ctx.restore();
 
   drawStartOverlay(ctx, canvas);
-  drawTimer(ctx);
   drawTrashDropZone(ctx, canvas);
   ctx.restore();
 }
@@ -578,14 +580,125 @@ function drawMarquee(ctx: CanvasRenderingContext2D, marquee: MarqueeInfo): void 
 }
 
 function formatElapsed(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  const totalMs = Math.max(0, Math.floor(ms));
+  const hours = Math.floor(totalMs / 3_600_000);
+  const minutes = Math.floor((totalMs % 3_600_000) / 60_000);
+  const seconds = Math.floor((totalMs % 60_000) / 1000);
+  const millis = totalMs % 1000;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
 }
 
 function currentElapsedMs(): number {
-  return gameStarted ? elapsedMs + performance.now() - timerStartMs : elapsedMs;
+  return gameStarted && !timerFrozen ? elapsedMs + performance.now() - timerStartMs : elapsedMs;
+}
+
+function ensureTimerElement(): HTMLDivElement {
+  const existing = document.getElementById('solve-timer') as HTMLDivElement | null;
+  if (existing) return existing;
+
+  const timer = document.createElement('div');
+  timer.id = 'solve-timer';
+  timer.className = 'flip-clock-timer hidden';
+  const canvasArea = document.getElementById('canvas-area');
+  canvasArea?.appendChild(timer);
+  return timer;
+}
+
+function updateTimerPosition(): void {
+  const timer = ensureTimerElement();
+  const bounds = frameScreenBounds();
+  if (!puzzle || !bounds || (!gameStarted && elapsedMs === 0)) {
+    timer.classList.add('hidden');
+    return;
+  }
+
+  timer.classList.remove('hidden');
+  timer.style.left = `${(bounds.minX + bounds.maxX) / 2}px`;
+  timer.style.top = `${Math.max(4, bounds.minY / 2)}px`;
+}
+
+function setFlipUnit(unit: HTMLElement, value: string): void {
+  const current = unit.dataset.value ?? '';
+  if (current === value) return;
+
+  unit.dataset.value = value;
+  unit.querySelectorAll<HTMLElement>('.flip-card-current .flip-card-number').forEach((el) => {
+    el.textContent = value;
+  });
+
+  if (current !== '') {
+    unit.querySelectorAll<HTMLElement>('.flip-card-old .flip-card-number').forEach((el) => {
+      el.textContent = current;
+    });
+    unit.querySelectorAll<HTMLElement>('.flip-card-next .flip-card-number').forEach((el) => {
+      el.textContent = value;
+    });
+    unit.classList.remove('flipping');
+    void unit.offsetWidth;
+    unit.classList.add('flipping');
+  }
+}
+
+function buildFlipDigit(value: string): HTMLSpanElement {
+  const unit = document.createElement('span');
+  unit.className = 'flip-card';
+  unit.dataset.value = '';
+  unit.innerHTML = `
+    <span class="flip-card-half flip-card-top flip-card-current"><span class="flip-card-number"></span></span>
+    <span class="flip-card-half flip-card-bottom flip-card-current"><span class="flip-card-number"></span></span>
+    <span class="flip-card-half flip-card-flap flip-card-flap-top flip-card-old"><span class="flip-card-number"></span></span>
+    <span class="flip-card-half flip-card-flap flip-card-flap-bottom flip-card-next"><span class="flip-card-number"></span></span>
+  `;
+  unit.addEventListener('animationend', () => unit.classList.remove('flipping'));
+  setFlipUnit(unit, value);
+  return unit;
+}
+
+function buildFlipSeparator(value: string): HTMLSpanElement {
+  const sep = document.createElement('span');
+  sep.className = `flip-clock-separator ${value === '.' ? 'dot' : 'colon'}`;
+  sep.textContent = value;
+  return sep;
+}
+
+function updateTimerDom(): void {
+  const timer = ensureTimerElement();
+  const text = formatElapsed(currentElapsedMs());
+
+  if (timer.dataset.format !== text.replace(/\d/g, '0')) {
+    timer.innerHTML = '';
+    [...text].forEach((ch) => {
+      timer.appendChild(/\d/.test(ch) ? buildFlipDigit(ch) : buildFlipSeparator(ch));
+    });
+    timer.dataset.format = text.replace(/\d/g, '0');
+  } else {
+    [...text].forEach((ch, index) => {
+      if (!/\d/.test(ch)) return;
+      const unit = timer.children[index] as HTMLElement | undefined;
+      if (unit) setFlipUnit(unit, ch);
+    });
+  }
+
+  updateTimerPosition();
+}
+
+function finishTimerAfterFlip(): void {
+  if (gameStarted) {
+    elapsedMs += performance.now() - timerStartMs;
+  }
+  timerFrozen = true;
+  timerStartMs = 0;
+  updateTimerDom();
+
+  window.setTimeout(() => {
+    updateTimerDom();
+    gameStarted = false;
+    timerFrozen = false;
+    if (timerIntervalId !== null) {
+      window.clearInterval(timerIntervalId);
+      timerIntervalId = null;
+    }
+  }, 430);
 }
 
 function frameScreenPoints(): Point[] {
@@ -661,33 +774,6 @@ function drawStartOverlay(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
   ctx.closePath();
   ctx.fillStyle = '#fff';
   ctx.fill();
-  ctx.restore();
-}
-
-function drawTimer(ctx: CanvasRenderingContext2D): void {
-  if (!puzzle || (!gameStarted && elapsedMs === 0)) return;
-  const bounds = frameScreenBounds();
-  if (!bounds) return;
-  const text = formatElapsed(currentElapsedMs());
-  const x = (bounds.minX + bounds.maxX) / 2;
-  const y = Math.max(12, bounds.minY - 42);
-
-  ctx.save();
-  ctx.font = '700 22px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const metrics = ctx.measureText(text);
-  const boxW = Math.max(88, metrics.width + 28);
-  const boxH = 34;
-  ctx.fillStyle = 'rgba(245, 238, 224, 0.9)';
-  ctx.strokeStyle = 'rgba(91, 63, 31, 0.55)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.roundRect(x - boxW / 2, y, boxW, boxH, 6);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#3f3320';
-  ctx.fillText(text, x, y + boxH / 2);
   ctx.restore();
 }
 
@@ -1115,27 +1201,28 @@ function resetTimer(): void {
   gameStarted = false;
   timerStartMs = 0;
   elapsedMs = 0;
+  timerFrozen = false;
+  const timer = document.getElementById('solve-timer') as HTMLDivElement | null;
+  if (timer) {
+    timer.innerHTML = '';
+    timer.dataset.format = '';
+    timer.classList.add('hidden');
+  }
 }
 
 function startPuzzleTimer(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
   if (gameStarted || won) return;
   gameStarted = true;
+  timerFrozen = false;
   timerStartMs = performance.now();
+  updateTimerDom();
   if (timerIntervalId !== null) window.clearInterval(timerIntervalId);
-  timerIntervalId = window.setInterval(() => render(ctx, canvas), 250);
+  timerIntervalId = window.setInterval(updateTimerDom, 33);
   render(ctx, canvas);
 }
 
 function stopPuzzleTimer(): void {
-  if (gameStarted) {
-    elapsedMs += performance.now() - timerStartMs;
-  }
-  gameStarted = false;
-  timerStartMs = 0;
-  if (timerIntervalId !== null) {
-    window.clearInterval(timerIntervalId);
-    timerIntervalId = null;
-  }
+  finishTimerAfterFlip();
 }
 
 function renderPuzzleList(
@@ -1426,6 +1513,7 @@ function showVictoryOverlay(): void {
   saveBtn.addEventListener('click', () => {
     const mainCanvas = document.getElementById('main-canvas') as HTMLCanvasElement;
     saveImage(mainCanvas);
+    removeVictoryOverlay();
   });
 
   const closeBtn = document.createElement('button');
