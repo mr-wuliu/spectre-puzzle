@@ -105,6 +105,21 @@ describe('exportPuzzle', () => {
     expect(parsed.curvedEdges).toBe(false);
   });
 
+  it('forces curved edges off for Hat puzzles', () => {
+    const model = makeSampleModel();
+    const json = exportPuzzle(
+      model,
+      'hat',
+      true,
+      { offsets: [{ t: 0, offset: 0 }, { t: 0.5, offset: 0 }] },
+    );
+    const parsed = JSON.parse(json);
+
+    expect(parsed.tileType).toBe('hat');
+    expect(parsed.curvedEdges).toBe(false);
+    expect(parsed.curveData).toBeUndefined();
+  });
+
   it('serializes piece polygon vertices correctly', () => {
     const model = makeSampleModel();
     const json = exportPuzzle(model);

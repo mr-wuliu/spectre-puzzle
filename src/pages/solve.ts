@@ -212,15 +212,26 @@ function drawFrame(
     for (let i = 1; i < verts.length; i++) path.lineTo(verts[i].x, verts[i].y);
     path.closePath();
 
-    for (const ftp of frameTilePolys) {
-      const tilePath = buildPiecePath(ftp);
-      path.addPath(tilePath);
+    const boundaryLoops = curvedEdges ? [] : buildBoundaryLoops(frameTilePolys);
+    if (boundaryLoops.length > 0) {
+      for (const loop of boundaryLoops) {
+        addLoopToPath(path, loop);
+      }
+    } else {
+      for (const ftp of frameTilePolys) {
+        const tilePath = buildPiecePath(ftp);
+        path.addPath(tilePath);
+      }
     }
 
     ctx.fillStyle = 'rgba(232, 220, 200, 0.3)';
     ctx.fill(path, 'evenodd');
 
-    drawFrameTileBoundary(ctx, frameTilePolys);
+    if (curvedEdges) {
+      drawFrameTileBoundary(ctx, frameTilePolys);
+    } else if (boundaryLoops.length > 0) {
+      drawBoundaryLoops(ctx, boundaryLoops);
+    }
 
     const outerPath = new Path2D();
     outerPath.moveTo(verts[0].x, verts[0].y);
@@ -280,6 +291,170 @@ function drawFrameTileBoundary(
   ctx.restore();
 }
 
+function buildBoundaryLoops(frameTilePolys: Polygon[]): Point[][] {
+  const edges: Array<{ a: Point; b: Point }> = [];
+
+  for (const poly of frameTilePolys) {
+    const verts = poly.vertices;
+    for (let i = 0; i < verts.length; i++) {
+      const a = verts[i];
+      const b = verts[(i + 1) % verts.length];
+      if (point.distance(a, b) < 1e-8) continue;
+      edges.push({ a, b });
+    }
+  }
+
+  const boundaryEdges = buildUnionBoundaryEdges(edges);
+  const loops: Point[][] = [];
+  const used = new Set<number>();
+  const eps = 1e-4;
+
+  while (used.size < boundaryEdges.length) {
+    const startIdx = boundaryEdges.findIndex((_, i) => !used.has(i));
+    if (startIdx === -1) break;
+
+    const loop: Point[] = [boundaryEdges[startIdx].a];
+    used.add(startIdx);
+    let currentEnd = boundaryEdges[startIdx].b;
+
+    for (;;) {
+      let foundNext = false;
+      for (let i = 0; i < boundaryEdges.length; i++) {
+        if (used.has(i)) continue;
+        const edge = boundaryEdges[i];
+        if (point.distance(edge.a, currentEnd) < eps) {
+          loop.push(edge.a);
+          currentEnd = edge.b;
+          used.add(i);
+          foundNext = true;
+          break;
+        }
+        if (point.distance(edge.b, currentEnd) < eps) {
+          loop.push(edge.b);
+          currentEnd = edge.a;
+          used.add(i);
+          foundNext = true;
+          break;
+        }
+      }
+
+      if (!foundNext || point.distance(currentEnd, loop[0]) < eps) break;
+    }
+
+    if (loop.length >= 3) loops.push(loop);
+  }
+
+  return loops;
+}
+
+function buildUnionBoundaryEdges(edges: Array<{ a: Point; b: Point }>): Array<{ a: Point; b: Point }> {
+  type ProjectedSegment = { t1: number; t2: number; sign: number };
+  type LineGroup = {
+    ux: number;
+    uy: number;
+    nx: number;
+    ny: number;
+    offset: number;
+    segments: ProjectedSegment[];
+  };
+
+  const groups = new Map<string, LineGroup>();
+  const scale = 1000;
+
+  for (const edge of edges) {
+    const dx = edge.b.x - edge.a.x;
+    const dy = edge.b.y - edge.a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-8) continue;
+
+    let ux = dx / len;
+    let uy = dy / len;
+    if (ux < -1e-8 || (Math.abs(ux) < 1e-8 && uy < 0)) {
+      ux = -ux;
+      uy = -uy;
+    }
+
+    const nx = -uy;
+    const ny = ux;
+    const offset = edge.a.x * nx + edge.a.y * ny;
+    const key = `${Math.round(ux * scale)},${Math.round(uy * scale)},${Math.round(offset * scale)}`;
+
+    let group = groups.get(key);
+    if (!group) {
+      group = { ux, uy, nx, ny, offset, segments: [] };
+      groups.set(key, group);
+    }
+
+    const ta = edge.a.x * group.ux + edge.a.y * group.uy;
+    const tb = edge.b.x * group.ux + edge.b.y * group.uy;
+    group.segments.push({
+      t1: Math.min(ta, tb),
+      t2: Math.max(ta, tb),
+      sign: ta <= tb ? 1 : -1,
+    });
+  }
+
+  const boundaryEdges: Array<{ a: Point; b: Point }> = [];
+  const eps = 1e-6;
+
+  for (const group of groups.values()) {
+    const cuts = Array.from(new Set(
+      group.segments
+        .flatMap((segment) => [segment.t1, segment.t2])
+        .map((t) => Math.round(t / eps) * eps),
+    )).sort((a, b) => a - b);
+
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const t1 = cuts[i];
+      const t2 = cuts[i + 1];
+      if (t2 - t1 < eps) continue;
+      const mid = (t1 + t2) / 2;
+      const covering = group.segments.filter((segment) =>
+        mid > segment.t1 + eps && mid < segment.t2 - eps
+      );
+      if (covering.length !== 1) continue;
+
+      const start = {
+        x: group.ux * t1 + group.nx * group.offset,
+        y: group.uy * t1 + group.ny * group.offset,
+      };
+      const end = {
+        x: group.ux * t2 + group.nx * group.offset,
+        y: group.uy * t2 + group.ny * group.offset,
+      };
+      boundaryEdges.push(covering[0].sign > 0 ? { a: start, b: end } : { a: end, b: start });
+    }
+  }
+
+  return boundaryEdges;
+}
+
+function addLoopToPath(path: Path2D, loop: Point[]): void {
+  path.moveTo(loop[0].x, loop[0].y);
+  for (let i = 1; i < loop.length; i++) {
+    path.lineTo(loop[i].x, loop[i].y);
+  }
+  path.closePath();
+}
+
+function drawBoundaryLoops(ctx: CanvasRenderingContext2D, loops: Point[][]): void {
+  ctx.save();
+  ctx.beginPath();
+  for (const loop of loops) {
+    if (loop.length < 3) continue;
+    ctx.moveTo(loop[0].x, loop[0].y);
+    for (let i = 1; i < loop.length; i++) {
+      ctx.lineTo(loop[i].x, loop[i].y);
+    }
+    ctx.closePath();
+  }
+  ctx.strokeStyle = '#5b3f1f';
+  ctx.lineWidth = 2.5 / sceneXform.zoom;
+  ctx.setLineDash([]);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function addCurvedBoundaryEdge(
   ctx: CanvasRenderingContext2D,
   poly: Polygon,
@@ -318,13 +493,10 @@ function addCurvedBoundaryEdge(
 }
 
 function undirectedEdgeKey(a: Point, b: Point): string {
-  const ak = pointKey(a);
-  const bk = pointKey(b);
-  return ak < bk ? `${ak}|${bk}` : `${bk}|${ak}`;
-}
-
-function pointKey(p: Point): string {
-  return `${Math.round(p.x * 1000)},${Math.round(p.y * 1000)}`;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const len = point.distance(a, b);
+  return `${Math.round(mx * 1000)},${Math.round(my * 1000)},${Math.round(len * 1000)}`;
 }
 
 function buildPiecePath(poly: Polygon): Path2D {
@@ -801,8 +973,9 @@ function exportPuzzleRaw(id: string): string | null {
 function extractCurveMeta(json: string): void {
   try {
     const parsed = JSON.parse(json);
-    curvedEdges = parsed['curvedEdges'] === true;
-    curveData = parsed['curveData'] || null;
+    const isSpectre = parsed['tileType'] !== 'hat';
+    curvedEdges = isSpectre && parsed['curvedEdges'] === true;
+    curveData = curvedEdges ? (parsed['curveData'] || null) : null;
   } catch {
     curvedEdges = false;
     curveData = null;

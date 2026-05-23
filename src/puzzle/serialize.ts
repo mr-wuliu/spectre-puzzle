@@ -79,6 +79,8 @@ export function exportPuzzle(
   curvedEdges: boolean = true,
   curveData?: EdgeCurveData | null,
 ): string {
+  const effectiveCurvedEdges = tileType === 'spectre' && curvedEdges;
+  const effectiveCurveData = effectiveCurvedEdges ? curveData : null;
   const pieces: SerializedPiece[] = model.pieces.map((p) => ({
     id: p.id,
     polygon: {
@@ -107,11 +109,11 @@ export function exportPuzzle(
     pieces,
     solution,
     tileType,
-    curvedEdges,
+    curvedEdges: effectiveCurvedEdges,
   };
 
-  if (curveData) {
-    doc.curveData = curveData;
+  if (effectiveCurveData) {
+    doc.curveData = effectiveCurveData;
   }
 
   if (model.frameTilePolygons.length > 0) {

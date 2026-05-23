@@ -11,8 +11,6 @@ export interface EdgeCurveData {
 
 const CANVAS_W = 600;
 const CANVAS_H = 350;
-const PREVIEW_W = 200;
-const PREVIEW_H = 180;
 const MAX_OFFSET = 0.5;
 const START_X = CANVAS_W * 0.05;
 const MID_X = CANVAS_W * 0.50;
@@ -238,8 +236,6 @@ export class CurveEditor {
   private overlay: HTMLDivElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
-  private previewCanvas: HTMLCanvasElement | null = null;
-  private previewCtx: CanvasRenderingContext2D | null = null;
   private freehandBtn: HTMLButtonElement | null = null;
   private bezierBtn: HTMLButtonElement | null = null;
 
@@ -295,8 +291,6 @@ export class CurveEditor {
     this.overlay = null;
     this.canvas = null;
     this.ctx = null;
-    this.previewCanvas = null;
-    this.previewCtx = null;
     this.freehandBtn = null;
     this.bezierBtn = null;
     this.resolvePromise = null;
@@ -360,22 +354,6 @@ export class CurveEditor {
 
     canvasWrapper.appendChild(this.canvas);
 
-    const previewSection = document.createElement('div');
-    previewSection.className = 'curve-editor-preview-section';
-
-    const previewLabel = document.createElement('span');
-    previewLabel.className = 'curve-editor-preview-label';
-    previewLabel.textContent = 'Preview:';
-
-    this.previewCanvas = document.createElement('canvas');
-    this.previewCanvas.width = PREVIEW_W;
-    this.previewCanvas.height = PREVIEW_H;
-    this.previewCanvas.className = 'curve-editor-preview-canvas';
-    this.previewCtx = this.previewCanvas.getContext('2d');
-
-    previewSection.appendChild(previewLabel);
-    previewSection.appendChild(this.previewCanvas);
-
     const actions = document.createElement('div');
     actions.className = 'curve-editor-actions';
 
@@ -401,7 +379,6 @@ export class CurveEditor {
     modal.appendChild(header);
     modal.appendChild(toolbar);
     modal.appendChild(canvasWrapper);
-    modal.appendChild(previewSection);
     modal.appendChild(actions);
     this.overlay.appendChild(modal);
 
@@ -578,7 +555,6 @@ export class CurveEditor {
 
   private render(): void {
     this.renderMainCanvas();
-    this.renderPreview();
   }
 
   private renderMainCanvas(): void {
@@ -758,106 +734,6 @@ export class CurveEditor {
         ctx.restore();
       }
     }
-  }
-
-  private renderPreview(): void {
-    const ctx = this.previewCtx;
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, PREVIEW_W, PREVIEW_H);
-
-    const margin = 16;
-    const previewStartX = margin;
-    const previewEndX = PREVIEW_W - margin;
-    const previewEdgeLen = previewEndX - previewStartX;
-    const halfH = PREVIEW_H / 2;
-
-    const userOffsets = this.curveData.offsets;
-    if (userOffsets.length < 2) return;
-
-    // Build full edge: user offsets + mirrored offsets
-    const fullEdge: BezierOffset[] = [...userOffsets];
-    for (let i = userOffsets.length - 1; i >= 0; i--) {
-      const bo = userOffsets[i];
-      if (bo.t < 0.5 - 0.001) {
-        fullEdge.push({ t: 1 - bo.t, offset: -bo.offset });
-      }
-    }
-    fullEdge.sort((a, b) => a.t - b.t);
-
-    // Complement: reversed t, negated offset
-    const complementOffsets = fullEdge.map(o => ({ t: 1 - o.t, offset: -o.offset }));
-
-    const drawCurve = (
-      curveOffsets: BezierOffset[],
-      baselineY: number,
-      color: string,
-      label: string,
-    ) => {
-      ctx.save();
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = '#d4c5a9';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(previewStartX, baselineY);
-      ctx.lineTo(previewEndX, baselineY);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-
-      const points = curveOffsets.map(o => ({
-        x: previewStartX + o.t * previewEdgeLen,
-        y: baselineY - o.offset * previewEdgeLen,
-      }));
-
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      ctx.lineCap = 'round';
-
-      const pLimitUp = baselineY - 0.5 * previewEdgeLen;
-      const pLimitDown = baselineY + 0.5 * previewEdgeLen;
-      const pClampY = (y: number) => Math.max(pLimitUp, Math.min(pLimitDown, y));
-
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 0; i < points.length - 1; i++) {
-        const p0 = points[Math.max(0, i - 1)];
-        const p1 = points[i];
-        const p2 = points[i + 1];
-        const p3 = points[Math.min(points.length - 1, i + 2)];
-
-        ctx.bezierCurveTo(
-          p1.x + (p2.x - p0.x) / 6,
-          pClampY(p1.y + (p2.y - p0.y) / 6),
-          p2.x - (p3.x - p1.x) / 6,
-          pClampY(p2.y - (p3.y - p1.y) / 6),
-          p2.x,
-          p2.y,
-        );
-      }
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(points[0].x, points[0].y, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(points[points.length - 1].x, points[points.length - 1].y, 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.save();
-      ctx.font = '10px sans-serif';
-      ctx.fillStyle = color;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillText(label, previewStartX, baselineY - halfH / 2 + 2);
-      ctx.restore();
-    };
-
-    drawCurve(fullEdge, halfH / 2, '#8b6914', 'Original');
-    drawCurve(complementOffsets, halfH + halfH / 2, '#5a8a7a', 'Complement');
   }
 
   private save(): void {

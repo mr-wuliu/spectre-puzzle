@@ -561,6 +561,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateTileTypeFromRadio(): void {
     state.tileType = getSelectedTileType();
+    if (state.tileType === 'hat') {
+      state.curvyShapes.clear();
+    }
     if (curvedGroup) {
       curvedGroup.style.display = state.tileType === 'spectre' ? '' : 'none';
     }
@@ -723,16 +726,32 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectedTiles = selectedIndices.map(i => state.tiles[i]);
     if (selectedTiles.length === 0) return null;
 
-    const selectedWorldPolys = selectedTiles.map(t =>
-      transform.applyToPolygon(t.transform, t.polygon)
+    if (!state.selectionRect) return null;
+    const frame = state.selectionRect;
+    const uprightTransform = transform.compose(
+      transform.translation(frame.cx, frame.cy),
+      transform.compose(
+        transform.rotation(-frame.angle),
+        transform.translation(-frame.cx, -frame.cy),
+      ),
     );
 
-    if (!state.selectionRect) return null;
-    const corners = frameCorners(state.selectionRect);
+    const corners = frameCorners(frame).map((corner) =>
+      transform.applyToPoint(uprightTransform, corner)
+    );
+
+    const selectedWorldPolys = selectedTiles.map(t =>
+      transform.applyToPolygon(
+        uprightTransform,
+        transform.applyToPolygon(t.transform, t.polygon),
+      )
+    );
 
     const framePolygon = polygon.create([...corners]);
 
-    const allWorldPolyList = buildWorldPolyList(state.tiles);
+    const allWorldPolyList = buildWorldPolyList(state.tiles).map((entry) => ({
+      poly: transform.applyToPolygon(uprightTransform, entry.poly),
+    }));
     const selectedGlobalSet = new Set(selectedIndices);
 
     const pieces: piece.Piece[] = [];
