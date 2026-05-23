@@ -797,6 +797,20 @@ function renderSingleThumbnail(thumbCanvas: HTMLCanvasElement, piece: Piece): vo
   tctx.restore();
 }
 
+function createTrayDragImage(piece: Piece): HTMLCanvasElement {
+  const dragCanvas = document.createElement('canvas');
+  dragCanvas.width = THUMBNAIL_SIZE;
+  dragCanvas.height = THUMBNAIL_SIZE;
+  dragCanvas.style.position = 'fixed';
+  dragCanvas.style.left = '-10000px';
+  dragCanvas.style.top = '-10000px';
+  dragCanvas.style.pointerEvents = 'none';
+  dragCanvas.style.background = 'transparent';
+  renderSingleThumbnail(dragCanvas, piece);
+  document.body.appendChild(dragCanvas);
+  return dragCanvas;
+}
+
 function updateTray(): void {
   const tray = document.getElementById('piece-tray');
   if (!tray) return;
@@ -829,8 +843,6 @@ function updateTray(): void {
     const card = document.createElement('div');
     card.className = 'tray-piece';
     card.dataset.pieceKind = group.kind;
-    card.style.cursor = 'grab';
-    card.draggable = true;
 
     if (selectedTrayPieceKind === group.kind) {
       card.classList.add('selected');
@@ -839,6 +851,8 @@ function updateTray(): void {
     const thumbCanvas = document.createElement('canvas');
     thumbCanvas.width = THUMBNAIL_SIZE;
     thumbCanvas.height = THUMBNAIL_SIZE;
+    thumbCanvas.draggable = true;
+    thumbCanvas.style.cursor = 'grab';
     renderSingleThumbnail(thumbCanvas, piece);
 
     const label = document.createElement('span');
@@ -853,10 +867,13 @@ function updateTray(): void {
       updateTraySelection();
     });
 
-    card.addEventListener('dragstart', (e) => {
+    thumbCanvas.addEventListener('dragstart', (e) => {
       selectedTrayPieceKind = group.kind;
       e.dataTransfer?.setData('text/plain', `puzzle-piece-kind:${group.kind}`);
       e.dataTransfer?.setData('application/x-puzzle-piece-kind', group.kind);
+      const dragImage = createTrayDragImage(piece);
+      e.dataTransfer?.setDragImage(dragImage, THUMBNAIL_SIZE / 2, THUMBNAIL_SIZE / 2);
+      window.setTimeout(() => dragImage.remove(), 0);
       updateTraySelection();
     });
 
