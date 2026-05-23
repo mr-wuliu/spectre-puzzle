@@ -27,14 +27,16 @@ interface DragInfo {
   groupIds: number[];
   startScenePt: Point;
   startTransforms: Map<number, AffineTransform>;
+  startSelectionFrame: SelectionFrame | null;
 }
 
 interface RotateDragInfo {
-  pieceId: number;
   startAngle: number;
-  startRotation: number;
   pivotX: number;
   pivotY: number;
+  groupIds: number[];
+  startTransforms: Map<number, AffineTransform>;
+  startSelectionFrame: SelectionFrame;
 }
 
 interface MarqueeInfo {
@@ -42,12 +44,20 @@ interface MarqueeInfo {
   current: Point;
 }
 
+interface SelectionFrame {
+  cx: number;
+  cy: number;
+  width: number;
+  height: number;
+  angle: number;
+}
+
 type TrayPieceKind = 'normal' | 'chiral';
 
-const ROTATION_STEP = Math.PI / 6;
 const THUMBNAIL_SIZE = 72;
-const ROTATE_HANDLE_RADIUS = 8;
-const SOLVE_SNAP_THRESHOLD = 0.4;
+const ROTATE_HANDLE_RADIUS = 12;
+const ROTATE_HANDLE_OFFSET = 28;
+const SOLVE_SNAP_THRESHOLD = 0.2;
 const SOLVE_SNAP_ANGLE_THRESHOLD = Math.PI / 18;
 const SOLVE_SNAP_GEOMETRIC_MATCH = true;
 const SOLVE_SNAP_INCLUDE_BOUNDARY_EDGES = true;
@@ -59,6 +69,7 @@ let dragInfo: DragInfo | null = null;
 let rotateDragInfo: RotateDragInfo | null = null;
 let marqueeInfo: MarqueeInfo | null = null;
 let selectedPieceIds = new Set<number>();
+let selectionFrame: SelectionFrame | null = null;
 let selectedTrayPieceKind: TrayPieceKind | null = null;
 let won = false;
 let hoveredPieceId: number | null = null;
@@ -175,9 +186,7 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void 
     drawPiece(ctx, p, isDragging || selectedPieceIds.has(p.id));
   }
 
-  for (const p of placed) {
-    drawRotateHandle(ctx, p);
-  }
+  drawSelectionFrame(ctx);
 
   if (marqueeInfo !== null) {
     drawMarquee(ctx, marqueeInfo);
@@ -384,26 +393,103 @@ function drawMarquee(ctx: CanvasRenderingContext2D, marquee: MarqueeInfo): void 
   ctx.restore();
 }
 
-function getRotateHandlePos(piece: Piece): { x: number; y: number; pivotX: number; pivotY: number } {
-  const localCentroid = polygon.centroid(piece.polygon);
-  const worldCentroid = transform.applyToPoint(piece.transform, localCentroid);
-  const pivotX = worldCentroid.x;
-  const pivotY = worldCentroid.y;
+function getSelectedPlacedPieces(): Piece[] {
+  if (!puzzle || selectedPieceIds.size === 0) return [];
+  return puzzle.pieces.filter((p) => p.isPlaced && selectedPieceIds.has(p.id));
+}
+
+function createSelectionFrameForIds(ids: Iterable<number>): SelectionFrame | null {
+  if (!puzzle) return null;
+  const idSet = new Set(ids);
+  if (idSet.size === 0) return null;
+  const selectedPieces = puzzle.pieces.filter((p) => p.isPlaced && idSet.has(p.id));
+  if (selectedPieces.length === 0) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const piece of selectedPieces) {
+    const worldPoly = transform.applyToPolygon(piece.transform, piece.polygon);
+    for (const v of worldPoly.vertices) {
+      minX = Math.min(minX, v.x);
+      minY = Math.min(minY, v.y);
+      maxX = Math.max(maxX, v.x);
+      maxY = Math.max(maxY, v.y);
+    }
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
   return {
-    x: pivotX,
-    y: pivotY,
-    pivotX,
-    pivotY,
+    cx: (minX + maxX) / 2,
+    cy: (minY + maxY) / 2,
+    width: maxX - minX,
+    height: maxY - minY,
+    angle: 0,
   };
 }
 
-function drawRotateHandle(ctx: CanvasRenderingContext2D, piece: Piece): void {
-  const { x: handleX, y: handleY } = getRotateHandlePos(piece);
+function setSelectedPieceIds(ids: Iterable<number>): void {
+  selectedPieceIds = new Set(ids);
+  selectionFrame = createSelectionFrameForIds(selectedPieceIds);
+}
+
+function clearSelection(): void {
+  selectedPieceIds.clear();
+  selectionFrame = null;
+}
+
+function refreshSelectionFrame(): void {
+  selectionFrame = createSelectionFrameForIds(selectedPieceIds);
+}
+
+function getSelectionBounds(): SelectionFrame | null {
+  if (selectionFrame) return selectionFrame;
+  const selectedPieces = getSelectedPlacedPieces();
+  if (selectedPieces.length === 0) return null;
+  refreshSelectionFrame();
+  return selectionFrame;
+}
+
+function rotateLocalPoint(frame: SelectionFrame, localX: number, localY: number): Point {
+  const c = Math.cos(frame.angle);
+  const s = Math.sin(frame.angle);
+  return {
+    x: frame.cx + localX * c - localY * s,
+    y: frame.cy + localX * s + localY * c,
+  };
+}
+
+function toSelectionLocal(frame: SelectionFrame, p: Point): Point {
+  const dx = p.x - frame.cx;
+  const dy = p.y - frame.cy;
+  const c = Math.cos(-frame.angle);
+  const s = Math.sin(-frame.angle);
+  return {
+    x: dx * c - dy * s,
+    y: dx * s + dy * c,
+  };
+}
+
+function getSelectionRotateHandlePos(frame: SelectionFrame): Point {
+  return rotateLocalPoint(
+    frame,
+    0,
+    -frame.height / 2 - ROTATE_HANDLE_OFFSET / sceneXform.zoom,
+  );
+}
+
+function drawSelectionFrame(ctx: CanvasRenderingContext2D): void {
+  const frame = getSelectionBounds();
+  if (!frame) return;
+
+  const handle = getSelectionRotateHandlePos(frame);
   const hr = ROTATE_HANDLE_RADIUS / sceneXform.zoom;
 
   ctx.save();
   ctx.beginPath();
-  ctx.arc(handleX, handleY, hr, 0, Math.PI * 2);
+  ctx.arc(handle.x, handle.y, hr, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(139, 105, 20, 0.85)';
   ctx.fill();
   ctx.strokeStyle = '#fff';
@@ -412,20 +498,34 @@ function drawRotateHandle(ctx: CanvasRenderingContext2D, piece: Piece): void {
 
   const ar = hr * 0.4;
   ctx.beginPath();
-  ctx.arc(handleX, handleY, ar, -Math.PI * 0.7, Math.PI * 0.5);
+  ctx.arc(handle.x, handle.y, ar, -Math.PI * 0.7, Math.PI * 0.5);
   ctx.strokeStyle = '#fff';
   ctx.lineWidth = 1.5 / sceneXform.zoom;
   ctx.stroke();
   ctx.restore();
 }
 
-function hitTestRotateHandle(scenePt: Point, piece: Piece): boolean {
-  const { x: handleX, y: handleY } = getRotateHandlePos(piece);
+function hitTestSelectionRotateHandle(scenePt: Point): SelectionFrame | null {
+  const frame = getSelectionBounds();
+  if (!frame) return null;
+  const handle = getSelectionRotateHandlePos(frame);
   const hr = ROTATE_HANDLE_RADIUS / sceneXform.zoom;
   const threshold = hr + 5 / sceneXform.zoom;
-  const dx = scenePt.x - handleX;
-  const dy = scenePt.y - handleY;
-  return dx * dx + dy * dy < threshold * threshold;
+  const dx = scenePt.x - handle.x;
+  const dy = scenePt.y - handle.y;
+  return dx * dx + dy * dy < threshold * threshold ? frame : null;
+}
+
+function isInsideSelectionBounds(scenePt: Point): boolean {
+  const frame = getSelectionBounds();
+  if (!frame) return false;
+  const local = toSelectionLocal(frame, scenePt);
+  return (
+    local.x >= -frame.width / 2
+    && local.x <= frame.width / 2
+    && local.y >= -frame.height / 2
+    && local.y <= frame.height / 2
+  );
 }
 
 function getPlacedPieceAt(scenePt: Point): Piece | null {
@@ -435,18 +535,6 @@ function getPlacedPieceAt(scenePt: Point): Piece | null {
     if (!piece.isPlaced) continue;
     const localPt = transform.applyToPoint(transform.inverse(piece.transform), scenePt);
     if (polygon.containsPoint(piece.polygon, localPt)) {
-      return piece;
-    }
-  }
-  return null;
-}
-
-function getRotateHandlePieceAt(scenePt: Point): Piece | null {
-  if (!puzzle) return null;
-  for (let i = puzzle.pieces.length - 1; i >= 0; i--) {
-    const piece = puzzle.pieces[i];
-    if (!piece.isPlaced) continue;
-    if (hitTestRotateHandle(scenePt, piece)) {
       return piece;
     }
   }
@@ -472,7 +560,7 @@ function selectPiecesInMarquee(marquee: MarqueeInfo): void {
       nextSelection.add(piece.id);
     }
   }
-  selectedPieceIds = nextSelection;
+  setSelectedPieceIds(nextSelection);
 }
 
 function createFrameSnapPieces(frameTilePolygons: Polygon[]): Piece[] {
@@ -734,7 +822,7 @@ function loadPuzzleFromModel(
   dragInfo = null;
   rotateDragInfo = null;
   marqueeInfo = null;
-  selectedPieceIds.clear();
+  clearSelection();
   hoveredPieceId = null;
 
   extractCurveMeta(json);
@@ -768,7 +856,7 @@ function handleImport(
       dragInfo = null;
       rotateDragInfo = null;
       marqueeInfo = null;
-      selectedPieceIds.clear();
+      clearSelection();
       hoveredPieceId = null;
 
       extractCurveMeta(text);
@@ -842,15 +930,6 @@ function trySnap(
   updateStatusBar();
   checkWinAndRender();
   render(ctx, canvas);
-}
-
-function rotatePieceBy(piece: Piece, angleDelta: number): void {
-  const localCentroid = polygon.centroid(piece.polygon);
-  const currentRot = extractRotation(piece.transform);
-  const newRot = currentRot + angleDelta;
-  const worldCentroid = transform.applyToPoint(piece.transform, localCentroid);
-
-  piece.transform = transformFromCentroid(worldCentroid, localCentroid, newRot);
 }
 
 function checkWinAndRender(): void {
@@ -974,7 +1053,7 @@ function doReset(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void
   dragInfo = null;
   rotateDragInfo = null;
   marqueeInfo = null;
-  selectedPieceIds.clear();
+  clearSelection();
   hoveredPieceId = null;
   removeVictoryOverlay();
 
@@ -1006,6 +1085,7 @@ function onPointerDown(
   ctx: CanvasRenderingContext2D,
 ): void {
   if (!puzzle) return;
+  const model = puzzle;
 
   if (e.button === 2 || (e.button === 0 && e.shiftKey)) {
     e.preventDefault();
@@ -1021,17 +1101,27 @@ function onPointerDown(
   }
   marqueeInfo = null;
 
-  const rotatePiece = getRotateHandlePieceAt(scenePt);
-  if (rotatePiece) {
-    const { pivotX, pivotY } = getRotateHandlePos(rotatePiece);
+  const rotateBounds = hitTestSelectionRotateHandle(scenePt);
+  if (rotateBounds) {
+    const groupIds = Array.from(selectedPieceIds).filter((id) =>
+      model.pieces.some((p) => p.id === id && p.isPlaced),
+    );
     rotateDragInfo = {
-      pieceId: rotatePiece.id,
-      startAngle: Math.atan2(scenePt.y - pivotY, scenePt.x - pivotX),
-      startRotation: extractRotation(rotatePiece.transform),
-      pivotX,
-      pivotY,
+      startAngle: Math.atan2(scenePt.y - rotateBounds.cy, scenePt.x - rotateBounds.cx),
+      pivotX: rotateBounds.cx,
+      pivotY: rotateBounds.cy,
+      groupIds,
+      startSelectionFrame: { ...rotateBounds },
+      startTransforms: new Map(
+        groupIds
+          .map((id): [number, AffineTransform] | null => {
+            const piece = model.pieces.find((p) => p.id === id && p.isPlaced);
+            return piece ? [id, piece.transform] : null;
+          })
+          .filter((entry): entry is [number, AffineTransform] => entry !== null),
+      ),
     };
-    hoveredPieceId = rotatePiece.id;
+    hoveredPieceId = null;
     canvas.setPointerCapture(e.pointerId);
     render(ctx, canvas);
     return;
@@ -1041,9 +1131,9 @@ function onPointerDown(
   if (hitPiece) {
     const groupIds = selectedPieceIds.has(hitPiece.id)
       ? Array.from(selectedPieceIds)
-      : [];
-    if (groupIds.length <= 1) {
-      selectedPieceIds.clear();
+      : [hitPiece.id];
+    if (!selectedPieceIds.has(hitPiece.id)) {
+      setSelectedPieceIds(groupIds);
     }
 
     const localCentroid = polygon.centroid(hitPiece.polygon);
@@ -1057,10 +1147,11 @@ function onPointerDown(
       startRotation: extractRotation(hitPiece.transform),
       groupIds,
       startScenePt: scenePt,
+      startSelectionFrame: selectionFrame ? { ...selectionFrame } : null,
       startTransforms: new Map(
         groupIds
           .map((id): [number, AffineTransform] | null => {
-            const piece = puzzle?.pieces.find((p) => p.id === id && p.isPlaced);
+            const piece = model.pieces.find((p) => p.id === id && p.isPlaced);
             return piece ? [id, piece.transform] : null;
           })
           .filter((entry): entry is [number, AffineTransform] => entry !== null),
@@ -1071,7 +1162,30 @@ function onPointerDown(
     return;
   }
 
-  selectedPieceIds.clear();
+  if (selectedPieceIds.size > 1 && isInsideSelectionBounds(scenePt)) {
+    const groupIds = Array.from(selectedPieceIds);
+    dragInfo = {
+      pieceId: groupIds[0],
+      anchorOffset: { x: 0, y: 0 },
+      startRotation: 0,
+      groupIds,
+      startScenePt: scenePt,
+      startSelectionFrame: selectionFrame ? { ...selectionFrame } : null,
+      startTransforms: new Map(
+        groupIds
+          .map((id): [number, AffineTransform] | null => {
+            const piece = model.pieces.find((p) => p.id === id && p.isPlaced);
+            return piece ? [id, piece.transform] : null;
+          })
+          .filter((entry): entry is [number, AffineTransform] => entry !== null),
+      ),
+    };
+    canvas.setPointerCapture(e.pointerId);
+    render(ctx, canvas);
+    return;
+  }
+
+  clearSelection();
   marqueeInfo = { start: scenePt, current: scenePt };
   canvas.setPointerCapture(e.pointerId);
   render(ctx, canvas);
@@ -1087,19 +1201,29 @@ function onPointerMove(
 
   const rdInfo = rotateDragInfo;
   if (rdInfo !== null) {
-    const piece = puzzle.pieces.find((p) => p.id === rdInfo.pieceId);
-    if (piece) {
-      const currentAngle = Math.atan2(scenePt.y - rdInfo.pivotY, scenePt.x - rdInfo.pivotX);
-      const angleDelta = currentAngle - rdInfo.startAngle;
-      const newRot = rdInfo.startRotation + angleDelta;
-      const localCentroid = polygon.centroid(piece.polygon);
-      piece.transform = transformFromCentroid(
-        { x: rdInfo.pivotX, y: rdInfo.pivotY },
-        localCentroid,
-        newRot,
+    const currentAngle = Math.atan2(scenePt.y - rdInfo.pivotY, scenePt.x - rdInfo.pivotX);
+    const angleDelta = currentAngle - rdInfo.startAngle;
+    const rotationAroundSelection = transform.compose(
+      transform.translation(rdInfo.pivotX, rdInfo.pivotY),
+      transform.compose(
+        transform.rotation(angleDelta),
+        transform.translation(-rdInfo.pivotX, -rdInfo.pivotY),
+      ),
+    );
+    for (const id of rdInfo.groupIds) {
+      const piece = puzzle.pieces.find((p) => p.id === id);
+      const startTransform = rdInfo.startTransforms.get(id);
+      if (!piece || !startTransform) continue;
+      piece.transform = transform.compose(
+        rotationAroundSelection,
+        startTransform,
       );
-      render(ctx, canvas);
     }
+    selectionFrame = {
+      ...rdInfo.startSelectionFrame,
+      angle: rdInfo.startSelectionFrame.angle + angleDelta,
+    };
+    render(ctx, canvas);
     return;
   }
 
@@ -1116,6 +1240,13 @@ function onPointerMove(
           startTransform,
         );
       }
+      if (drag.startSelectionFrame) {
+        selectionFrame = {
+          ...drag.startSelectionFrame,
+          cx: drag.startSelectionFrame.cx + delta.x,
+          cy: drag.startSelectionFrame.cy + delta.y,
+        };
+      }
       render(ctx, canvas);
       return;
     }
@@ -1127,6 +1258,14 @@ function onPointerMove(
     const localCentroid = polygon.centroid(piece.polygon);
     const rot = drag.startRotation;
     piece.transform = transformFromCentroid(newWorldCentroid, localCentroid, rot);
+    if (drag.startSelectionFrame) {
+      const delta = point.subtract(scenePt, drag.startScenePt);
+      selectionFrame = {
+        ...drag.startSelectionFrame,
+        cx: drag.startSelectionFrame.cx + delta.x,
+        cy: drag.startSelectionFrame.cy + delta.y,
+      };
+    }
     render(ctx, canvas);
     return;
   }
@@ -1176,6 +1315,7 @@ function onPointerUp(
 
   if (piece && drag.groupIds.length <= 1) {
     trySnap(piece, ctx, canvas);
+    refreshSelectionFrame();
   }
   render(ctx, canvas);
 }
