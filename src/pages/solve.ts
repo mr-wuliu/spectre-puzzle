@@ -57,6 +57,8 @@ type TrayPieceKind = 'normal' | 'chiral';
 const THUMBNAIL_SIZE = 72;
 const ROTATE_HANDLE_RADIUS = 12;
 const ROTATE_HANDLE_OFFSET = 28;
+const TRASH_ZONE_SIZE = 64;
+const TRASH_ZONE_MARGIN = 16;
 const SOLVE_SNAP_THRESHOLD = 0.2;
 const SOLVE_SNAP_ANGLE_THRESHOLD = Math.PI / 18;
 const SOLVE_SNAP_GEOMETRIC_MATCH = true;
@@ -76,6 +78,7 @@ let hoveredPieceId: number | null = null;
 let pieceColorMap = new Map<number, { fill: string; stroke: string }>();
 let curvedEdges = false;
 let curveData: EdgeCurveData | null = null;
+let trashDropActive = false;
 const anim = new AnimationManager();
 
 function pieceColor(id: number, poly: Polygon): { fill: string; stroke: string } {
@@ -193,6 +196,8 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void 
   }
 
   ctx.restore();
+
+  drawTrashDropZone(ctx, canvas);
   ctx.restore();
 }
 
@@ -562,6 +567,82 @@ function drawMarquee(ctx: CanvasRenderingContext2D, marquee: MarqueeInfo): void 
   ctx.setLineDash([5 / sceneXform.zoom, 3 / sceneXform.zoom]);
   ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
   ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+  ctx.restore();
+}
+
+function getCanvasPoint(e: PointerEvent | DragEvent, canvas: HTMLCanvasElement): Point {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+  };
+}
+
+function getTrashDropZoneRect(canvas: HTMLCanvasElement): {
+  x: number;
+  y: number;
+  size: number;
+} {
+  const { w, h } = canvasLogicalSize(canvas);
+  return {
+    x: w - TRASH_ZONE_MARGIN - TRASH_ZONE_SIZE,
+    y: h - TRASH_ZONE_MARGIN - TRASH_ZONE_SIZE,
+    size: TRASH_ZONE_SIZE,
+  };
+}
+
+function isInTrashDropZone(canvasPt: Point, canvas: HTMLCanvasElement): boolean {
+  const rect = getTrashDropZoneRect(canvas);
+  return (
+    canvasPt.x >= rect.x
+    && canvasPt.x <= rect.x + rect.size
+    && canvasPt.y >= rect.y
+    && canvasPt.y <= rect.y + rect.size
+  );
+}
+
+function drawTrashDropZone(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+  const rect = getTrashDropZoneRect(canvas);
+  const cx = rect.x + rect.size / 2;
+  const cy = rect.y + rect.size / 2;
+  const iconW = rect.size * 0.42;
+  const iconH = rect.size * 0.44;
+  const top = cy - iconH * 0.36;
+  const left = cx - iconW / 2;
+
+  ctx.save();
+  ctx.fillStyle = trashDropActive
+    ? 'rgba(155, 60, 45, 0.22)'
+    : 'rgba(245, 238, 224, 0.72)';
+  ctx.strokeStyle = trashDropActive
+    ? 'rgba(155, 60, 45, 0.95)'
+    : 'rgba(91, 63, 31, 0.62)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.roundRect(rect.x, rect.y, rect.size, rect.size, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = trashDropActive ? '#8f2d22' : '#5b3f1f';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(left - iconW * 0.1, top);
+  ctx.lineTo(left + iconW * 1.1, top);
+  ctx.moveTo(left + iconW * 0.28, top - iconH * 0.18);
+  ctx.lineTo(left + iconW * 0.72, top - iconH * 0.18);
+  ctx.moveTo(left + iconW * 0.38, top - iconH * 0.18);
+  ctx.lineTo(left + iconW * 0.44, top - iconH * 0.3);
+  ctx.lineTo(left + iconW * 0.56, top - iconH * 0.3);
+  ctx.lineTo(left + iconW * 0.62, top - iconH * 0.18);
+  ctx.rect(left, top + iconH * 0.14, iconW, iconH * 0.72);
+  ctx.moveTo(left + iconW * 0.33, top + iconH * 0.28);
+  ctx.lineTo(left + iconW * 0.33, top + iconH * 0.72);
+  ctx.moveTo(left + iconW * 0.67, top + iconH * 0.28);
+  ctx.lineTo(left + iconW * 0.67, top + iconH * 0.72);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -1012,6 +1093,7 @@ function loadPuzzleFromModel(
   dragInfo = null;
   rotateDragInfo = null;
   marqueeInfo = null;
+  trashDropActive = false;
   clearSelection();
   hoveredPieceId = null;
 
@@ -1046,6 +1128,7 @@ function handleImport(
       dragInfo = null;
       rotateDragInfo = null;
       marqueeInfo = null;
+      trashDropActive = false;
       clearSelection();
       hoveredPieceId = null;
 
@@ -1085,6 +1168,23 @@ function placePiecesFromTray(
   updateTray();
   updateStatusBar();
   trySnap(piece, ctx, canvas);
+}
+
+function returnPiecesToTray(ids: Iterable<number>, ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+  if (!puzzle) return;
+  const idSet = new Set(ids);
+  for (const piece of puzzle.pieces) {
+    if (!idSet.has(piece.id)) continue;
+    piece.isPlaced = false;
+    piece.transform = transform.identity();
+  }
+
+  trashDropActive = false;
+  hoveredPieceId = null;
+  clearSelection();
+  updateTray();
+  updateStatusBar();
+  render(ctx, canvas);
 }
 
 function trySnap(
@@ -1243,6 +1343,7 @@ function doReset(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void
   dragInfo = null;
   rotateDragInfo = null;
   marqueeInfo = null;
+  trashDropActive = false;
   clearSelection();
   hoveredPieceId = null;
   removeVictoryOverlay();
@@ -1419,6 +1520,7 @@ function onPointerMove(
 
   const drag = dragInfo;
   if (drag) {
+    trashDropActive = isInTrashDropZone(getCanvasPoint(e, canvas), canvas);
     if (drag.groupIds.length > 1) {
       const delta = point.subtract(scenePt, drag.startScenePt);
       for (const id of drag.groupIds) {
@@ -1458,6 +1560,11 @@ function onPointerMove(
     }
     render(ctx, canvas);
     return;
+  }
+
+  if (trashDropActive) {
+    trashDropActive = false;
+    render(ctx, canvas);
   }
 
   if (marqueeInfo !== null) {
@@ -1503,6 +1610,12 @@ function onPointerUp(
   const piece = puzzle.pieces.find((p) => p.id === drag.pieceId);
   dragInfo = null;
 
+  if (isInTrashDropZone(getCanvasPoint(e, canvas), canvas)) {
+    returnPiecesToTray(drag.groupIds, ctx, canvas);
+    return;
+  }
+
+  trashDropActive = false;
   if (piece && drag.groupIds.length <= 1) {
     trySnap(piece, ctx, canvas);
     refreshSelectionFrame();
