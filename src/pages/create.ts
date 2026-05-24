@@ -4,7 +4,7 @@ import * as spectreTiling from '../tiling/spectre';
 import { generateTileVertices } from '../tiling/shape-param';
 import { createCurvyShape, createCurvyShapeFromCurve } from '../tiling/curved';
 import type { CurvyShape, EdgeCurveData } from '../tiling/curved';
-import { CurveEditor } from '../ui/curve-editor';
+import { CurveEditor, USE_ORIGINAL_CURVE } from '../ui/curve-editor';
 import * as marquee from '../interaction/marquee';
 import * as piece from '../puzzle/piece';
 import * as puzzleModel from '../puzzle/puzzle-model';
@@ -59,10 +59,10 @@ function createState(): EditorState {
     isDragging: false,
     dragStartX: 0,
     dragStartY: 0,
-    tileType: 'spectre',
-    depth: 2,
+    tileType: (() => { try { const v = localStorage.getItem('spectre-tile-type'); return v === 'hat' || v === 'spectre' ? v : 'spectre'; } catch { return 'spectre' as const; } })(),
+    depth: (() => { try { const v = localStorage.getItem('spectre-depth'); return v ? parseInt(v, 10) : 2; } catch { return 2; } })(),
     curvedEdges: (() => { try { return localStorage.getItem('spectre-curved-edges') === 'true'; } catch { return false; } })(),
-    shapeParam: 1,
+    shapeParam: (() => { try { const v = localStorage.getItem('spectre-shape-param'); return v ? parseFloat(v) : 1; } catch { return 1; } })(),
     customCurveData: (() => { try { const s = localStorage.getItem('spectre-curve-data'); return s ? JSON.parse(s) as EdgeCurveData : null; } catch { return null; } })(),
   };
 }
@@ -548,6 +548,23 @@ document.addEventListener('DOMContentLoaded', () => {
   if (curvedCheckbox && state.curvedEdges) curvedCheckbox.checked = true;
   const persistedStatus = document.getElementById('curve-status');
   if (persistedStatus && state.customCurveData) persistedStatus.textContent = 'Custom curve applied';
+
+  if (depthSlider) {
+    depthSlider.value = String(state.depth);
+    if (depthValue) depthValue.textContent = String(state.depth);
+  }
+  if (shapeSlider) {
+    const raw = Math.round(state.shapeParam * 100);
+    shapeSlider.value = String(raw);
+    if (shapeValue) {
+      if (raw === 0) shapeValue.textContent = 'Hat';
+      else if (raw === 100) shapeValue.textContent = 'Spectre';
+      else shapeValue.textContent = `${raw}%`;
+    }
+  }
+  const tileTypeRadios = document.querySelectorAll<HTMLInputElement>('input[name="tile-type"]');
+  tileTypeRadios.forEach(r => { r.checked = r.value === state.tileType; });
+
   updateTileTypeFromRadio();
   updateStatus(state);
 
@@ -561,6 +578,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateTileTypeFromRadio(): void {
     state.tileType = getSelectedTileType();
+    try { localStorage.setItem('spectre-tile-type', state.tileType); } catch { /* ignore */ }
     if (state.tileType === 'hat') {
       state.curvyShapes.clear();
     }
@@ -580,6 +598,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (depthSlider) {
     depthSlider.addEventListener('input', () => {
       state.depth = parseInt(depthSlider.value, 10);
+      try { localStorage.setItem('spectre-depth', String(state.depth)); } catch { /* ignore */ }
       if (depthValue) depthValue.textContent = depthSlider.value;
     });
   }
@@ -588,6 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
     shapeSlider.addEventListener('input', () => {
       const raw = parseInt(shapeSlider.value, 10);
       state.shapeParam = raw / 100;
+      try { localStorage.setItem('spectre-shape-param', String(state.shapeParam)); } catch { /* ignore */ }
       if (shapeValue) {
         if (raw === 0) shapeValue.textContent = 'Hat';
         else if (raw === 100) shapeValue.textContent = 'Spectre';
@@ -616,9 +636,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const editor = new CurveEditor(modalEl);
       const result = await editor.open(state.customCurveData ?? undefined);
       if (result) {
-        state.customCurveData = result;
-        try { localStorage.setItem('spectre-curve-data', JSON.stringify(result)); } catch { /* ignore */ }
-        if (curveStatusEl) curveStatusEl.textContent = 'Custom curve applied';
+        if (result === USE_ORIGINAL_CURVE) {
+          state.customCurveData = null;
+          try { localStorage.removeItem('spectre-curve-data'); } catch { /* ignore */ }
+          if (curveStatusEl) curveStatusEl.textContent = 'Default curve applied';
+        } else {
+          state.customCurveData = result;
+          try { localStorage.setItem('spectre-curve-data', JSON.stringify(result)); } catch { /* ignore */ }
+          if (curveStatusEl) curveStatusEl.textContent = 'Custom curve applied';
+        }
         applyCustomCurve(state);
         render(ctx, canvas, state);
       }

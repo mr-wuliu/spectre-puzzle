@@ -71,14 +71,14 @@
   background-color: var(--color-surface-hover);
 }
 
-/* ── Mode toggle (pill buttons) ── */
-.curve-editor-toolbar {
+/* ── Tab bar (pill buttons) ── */
+.curve-editor-tabs {
   display: flex;
   gap: 0;
   margin-bottom: var(--spacing-md);
 }
 
-.curve-editor-mode-btn {
+.curve-editor-tab-btn {
   padding: var(--spacing-xs) var(--spacing-md);
   font-family: var(--font-family);
   font-size: 0.8125rem;
@@ -93,27 +93,69 @@
   outline: none;
 }
 
-.curve-editor-mode-btn:first-child {
+.curve-editor-tab-btn:first-child {
   border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
 
-.curve-editor-mode-btn:last-child {
+.curve-editor-tab-btn:last-child {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   border-left: none;
 }
 
-.curve-editor-mode-btn:hover {
+.curve-editor-tab-btn:not(:first-child):not(:last-child) {
+  border-radius: 0;
+  border-left: none;
+}
+
+.curve-editor-tab-btn:hover {
   background-color: var(--color-surface-hover);
 }
 
-.curve-editor-mode-btn.active {
+.curve-editor-tab-btn.active {
   color: #fff;
   background-color: var(--color-accent);
   border-color: var(--color-accent);
 }
 
-.curve-editor-mode-btn.active + .curve-editor-mode-btn {
+.curve-editor-tab-btn.active + .curve-editor-tab-btn {
   border-left-color: var(--color-accent);
+}
+
+/* ── Preset panel ── */
+.curve-editor-preset-panel {
+  display: none;
+  padding: var(--spacing-sm) 0;
+  margin-bottom: var(--spacing-md);
+}
+
+.curve-editor-preset-panel.active {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.curve-editor-preset-option {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background-color 0.1s ease;
+}
+
+.curve-editor-preset-option:hover {
+  background-color: var(--color-surface-hover);
+}
+
+.curve-editor-preset-option input[type="radio"] {
+  accent-color: var(--color-accent);
+}
+
+.curve-editor-preset-option label {
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--color-text);
 }
 
 /* ── Main canvas ── */
@@ -135,6 +177,10 @@
 }
 
 .curve-editor-canvas.mode-bezier {
+  cursor: default;
+}
+
+.curve-editor-canvas.mode-preset {
   cursor: default;
 }
 

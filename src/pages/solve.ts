@@ -585,7 +585,14 @@ function formatElapsed(ms: number): string {
   const minutes = Math.floor((totalMs % 3_600_000) / 60_000);
   const seconds = Math.floor((totalMs % 60_000) / 1000);
   const millis = totalMs % 1000;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+  const msText = String(millis).padStart(3, '0');
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${msText}`;
+  }
+  if (minutes > 0) {
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${msText}`;
+  }
+  return `${String(seconds).padStart(2, '0')}.${msText}`;
 }
 
 function currentElapsedMs(): number {
@@ -1617,17 +1624,246 @@ function doReset(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void
 }
 
 function saveImage(canvas: HTMLCanvasElement): void {
-  canvas.toBlob((blob) => {
+  if (!puzzle) return;
+  const imageCanvas = createAchievementImageCanvas(canvas);
+  imageCanvas.toBlob((blob) => {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = 'spectre-puzzle-solved.png';
+    anchor.download = 'spectre-puzzle-result.png';
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
   }, 'image/png');
+}
+
+function createAchievementImageCanvas(sourceCanvas: HTMLCanvasElement): HTMLCanvasElement {
+  const out = document.createElement('canvas');
+  out.width = 1080;
+  out.height = 1600;
+  const ctx = out.getContext('2d');
+  if (!ctx || !puzzle) return out;
+
+  drawAchievementBackground(ctx, out.width, out.height);
+
+  ctx.save();
+  ctx.fillStyle = '#4a3c28';
+  ctx.font = '800 64px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Puzzle Complete', out.width / 2, 110);
+
+  ctx.fillStyle = '#7a6c58';
+  ctx.font = '600 22px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillText('Spectre Puzzle', out.width / 2, 164);
+  ctx.restore();
+
+  drawAchievementPuzzle(ctx, sourceCanvas, {
+    x: 90,
+    y: 260,
+    w: 900,
+    h: 900,
+  });
+
+  drawAchievementTime(ctx, formatElapsed(elapsedMs || currentElapsedMs()), out.width / 2, 1380);
+
+  return out;
+}
+
+function drawAchievementBackground(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+): void {
+  const gradient = ctx.createLinearGradient(0, 0, w, h);
+  gradient.addColorStop(0, '#efe4d1');
+  gradient.addColorStop(0.55, '#d8c7a9');
+  gradient.addColorStop(1, '#c7b28f');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.globalAlpha = 0.18;
+  ctx.strokeStyle = '#8d7654';
+  ctx.lineWidth = 1;
+  for (let y = 0; y < h; y += 8) {
+    ctx.beginPath();
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(w, y + 0.5);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.12;
+  for (let x = 0; x < w; x += 11) {
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, 0);
+    ctx.lineTo(x + 0.5, h);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawAchievementPuzzle(
+  ctx: CanvasRenderingContext2D,
+  sourceCanvas: HTMLCanvasElement,
+  rect: { x: number; y: number; w: number; h: number },
+): void {
+  if (!puzzle) return;
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(74, 60, 40, 0.28)';
+  ctx.shadowBlur = 26;
+  ctx.shadowOffsetY = 10;
+  ctx.fillStyle = '#eadcc4';
+  ctx.beginPath();
+  ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 16);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = 'rgba(107, 91, 62, 0.55)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.clip();
+
+  ctx.fillStyle = '#dfcfb3';
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.globalAlpha = 0.18;
+  ctx.strokeStyle = '#8d7654';
+  ctx.lineWidth = 1;
+  for (let gx = rect.x; gx <= rect.x + rect.w; gx += 7) {
+    ctx.beginPath();
+    ctx.moveTo(gx + 0.5, rect.y);
+    ctx.lineTo(gx + 0.5, rect.y + rect.h);
+    ctx.stroke();
+  }
+  for (let gy = rect.y; gy <= rect.y + rect.h; gy += 7) {
+    ctx.beginPath();
+    ctx.moveTo(rect.x, gy + 0.5);
+    ctx.lineTo(rect.x + rect.w, gy + 0.5);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  const bbox = polygon.boundingBox(puzzle.framePolygon);
+  const fw = bbox.max.x - bbox.min.x;
+  const fh = bbox.max.y - bbox.min.y;
+  const zoom = Math.min((rect.w * 0.82) / fw, (rect.h * 0.82) / fh);
+  const panX = rect.x + rect.w / 2 - ((bbox.min.x + bbox.max.x) / 2) * zoom;
+  const panY = rect.y + rect.h / 2 - ((bbox.min.y + bbox.max.y) / 2) * zoom;
+
+  const oldScene = sceneXform;
+  const oldSelection = selectionFrame;
+  const oldSelectedIds = selectedPieceIds;
+  const oldDrag = dragInfo;
+  const oldRotate = rotateDragInfo;
+  const oldMarquee = marqueeInfo;
+  const oldHover = hoveredPieceId;
+  const oldGameStarted = gameStarted;
+
+  sceneXform = createSceneTransform({ panX, panY, zoom, centerX: 0, centerY: 0, rotation: 0 });
+  gameStarted = true;
+  selectionFrame = null;
+  selectedPieceIds = new Set();
+  dragInfo = null;
+  rotateDragInfo = null;
+  marqueeInfo = null;
+  hoveredPieceId = null;
+
+  ctx.save();
+  applyToCtx(ctx, sceneXform);
+  drawFrame(ctx, puzzle.framePolygon, puzzle.frameTilePolygons);
+  for (const piece of puzzle.pieces.filter((p) => p.isPlaced)) {
+    drawPiece(ctx, piece, false);
+  }
+  ctx.restore();
+
+  sceneXform = oldScene;
+  selectionFrame = oldSelection;
+  selectedPieceIds = oldSelectedIds;
+  dragInfo = oldDrag;
+  rotateDragInfo = oldRotate;
+  marqueeInfo = oldMarquee;
+  hoveredPieceId = oldHover;
+  gameStarted = oldGameStarted;
+
+  ctx.restore();
+}
+
+function drawAchievementTime(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+): void {
+  ctx.save();
+  ctx.fillStyle = '#7a6c58';
+  ctx.font = '800 30px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Completion Time', x, y - 82);
+
+  const panelW = 62;
+  const panelH = 92;
+  const gap = 12;
+  const sepW = 28;
+  const chars = [...text];
+  const totalW = chars.reduce((sum, ch, i) => {
+    const charW = /\d/.test(ch) ? panelW : sepW;
+    return sum + charW + (i === chars.length - 1 ? 0 : gap);
+  }, 0);
+
+  let cursor = x - totalW / 2;
+  for (const ch of chars) {
+    if (/\d/.test(ch)) {
+      drawAchievementFlipDigit(ctx, ch, cursor, y - panelH / 2, panelW, panelH);
+      cursor += panelW + gap;
+    } else {
+      ctx.fillStyle = '#3f3320';
+      ctx.font = ch === '.' ? '900 52px Arial, Helvetica, sans-serif' : '900 64px Arial, Helvetica, sans-serif';
+      ctx.fillText(ch, cursor + sepW / 2, y + (ch === '.' ? 20 : -4));
+      cursor += sepW + gap;
+    }
+  }
+  ctx.restore();
+}
+
+function drawAchievementFlipDigit(
+  ctx: CanvasRenderingContext2D,
+  digit: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  ctx.save();
+  ctx.fillStyle = '#171512';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 7);
+  ctx.fill();
+
+  ctx.fillStyle = '#332e27';
+  ctx.beginPath();
+  ctx.roundRect(x + 1, y + 1, w - 2, h / 2 - 1, 6);
+  ctx.fill();
+
+  ctx.fillStyle = '#171512';
+  ctx.beginPath();
+  ctx.roundRect(x + 1, y + h / 2, w - 2, h / 2 - 1, 6);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x + 2, y + h / 2);
+  ctx.lineTo(x + w - 2, y + h / 2);
+  ctx.stroke();
+
+  ctx.fillStyle = '#f7efe0';
+  ctx.font = `900 ${Math.floor(h * 0.78)}px Arial Black, Impact, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(digit, x + w / 2, y + h / 2 + 1);
+  ctx.restore();
 }
 
 function onPointerDown(

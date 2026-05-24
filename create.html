@@ -27,6 +27,7 @@
               <label><input type="radio" name="tile-type" value="hat"> Hat</label>
               <label><input type="radio" name="tile-type" value="spectre" checked> Spectre</label>
             </div>
+            <script>try{var _tt=localStorage.getItem('spectre-tile-type');if(_tt==='hat'||_tt==='spectre')document.querySelectorAll('input[name="tile-type"]').forEach(function(r){r.checked=r.value===_tt});}catch(e){}</script>
           </div>
           <div class="control-group">
             <label for="shape-slider">Shape: Hat ← → Spectre</label>
@@ -72,6 +73,30 @@
     </footer>
   </div>
   <div id="curve-editor-modal" class="modal-overlay" style="display:none;"></div>
+  <script>
+    try {
+      var d = localStorage.getItem('spectre-depth');
+      if (d) {
+        var ds = document.getElementById('depth-slider');
+        var dv = document.getElementById('depth-value');
+        if (ds) ds.value = d;
+        if (dv) dv.textContent = d;
+      }
+      var sp = localStorage.getItem('spectre-shape-param');
+      if (sp) {
+        var raw = Math.round(parseFloat(sp) * 100);
+        var ss = document.getElementById('shape-slider');
+        var sv = document.getElementById('shape-value');
+        if (ss) ss.value = raw;
+        if (sv) sv.textContent = raw === 0 ? 'Hat' : raw === 100 ? 'Spectre' : raw + '%';
+      }
+      var ce = localStorage.getItem('spectre-curved-edges');
+      if (ce === 'true') {
+        var cb = document.getElementById('curved-edges');
+        if (cb) cb.checked = true;
+      }
+    } catch(e) {}
+  </script>
   <script type="module" src="/src/pages/create.ts"></script>
 </body>
 </html>
