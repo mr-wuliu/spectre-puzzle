@@ -64,6 +64,10 @@ const SOLVE_SNAP_THRESHOLD = 0.2;
 const SOLVE_SNAP_ANGLE_THRESHOLD = Math.PI / 18;
 const SOLVE_SNAP_GEOMETRIC_MATCH = true;
 const SOLVE_SNAP_INCLUDE_BOUNDARY_EDGES = true;
+const VIEW_MIN_FRAME_SCALE = 0.45;
+const VIEW_MAX_FRAME_SCALE = 4.5;
+const VIEW_OVERSCROLL_FACTOR = 0.28;
+const VIEW_REBOUND_MS = 180;
 
 let puzzle: PuzzleModel | null = null;
 let initialJSON = '';
@@ -80,11 +84,17 @@ let pieceColorMap = new Map<number, { fill: string; stroke: string }>();
 let curvedEdges = false;
 let curveData: EdgeCurveData | null = null;
 let trashDropActive = false;
+let panMode = false;
+let isPanning = false;
+let panStartX = 0;
+let panStartY = 0;
 let gameStarted = false;
+let initialXform: SceneTransform | null = null;
 let timerStartMs = 0;
 let elapsedMs = 0;
 let timerFrozen = false;
 let timerIntervalId: number | null = null;
+let viewReboundFrameId: number | null = null;
 const anim = new AnimationManager();
 
 function pieceColor(id: number, poly: Polygon): { fill: string; stroke: string } {
@@ -149,6 +159,7 @@ function canvasLogicalSize(canvas: HTMLCanvasElement): { w: number; h: number } 
 
 function centerView(canvas: HTMLCanvasElement): void {
   if (!puzzle) return;
+  cancelViewRebound();
   const { w, h } = canvasLogicalSize(canvas);
   const bbox = polygon.boundingBox(puzzle.framePolygon);
   const fcx = (bbox.min.x + bbox.max.x) / 2;
@@ -169,6 +180,7 @@ function centerView(canvas: HTMLCanvasElement): void {
     centerY: 0,
     rotation: 0,
   });
+  initialXform = sceneXform;
   updateTimerPosition();
 }
 
@@ -187,9 +199,12 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void 
     return;
   }
 
+  drawFixedFrame(ctx);
+
   ctx.save();
+  clipToFixedFrame(ctx);
   applyToCtx(ctx, sceneXform);
-  drawFrame(ctx, puzzle.framePolygon, puzzle.frameTilePolygons);
+  drawFrameInterior(ctx, puzzle.frameTilePolygons);
 
   const placed = puzzle.pieces.filter((p) => p.isPlaced);
   for (const p of placed) {
@@ -206,7 +221,226 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void 
   ctx.restore();
 
   drawStartOverlay(ctx, canvas);
+  drawPanTool(ctx, canvas);
   drawTrashDropZone(ctx, canvas);
+  ctx.restore();
+}
+
+function fixedFrameTransform(): SceneTransform {
+  return initialXform ?? sceneXform;
+}
+
+function frameWorldSize(): { width: number; height: number } | null {
+  if (!puzzle) return null;
+  const bbox = polygon.boundingBox(puzzle.framePolygon);
+  const width = bbox.max.x - bbox.min.x;
+  const height = bbox.max.y - bbox.min.y;
+  if (width <= 0 || height <= 0) return null;
+  return { width, height };
+}
+
+function viewZoomLimits(): { min: number; max: number } {
+  const fixedBounds = frameScreenBoundsForXform(fixedFrameTransform());
+  const worldSize = frameWorldSize();
+  if (!fixedBounds || !worldSize) return { min: 0.05, max: 100 };
+
+  const fixedWidth = fixedBounds.maxX - fixedBounds.minX;
+  const fixedHeight = fixedBounds.maxY - fixedBounds.minY;
+  const minZoom = Math.max(
+    (fixedWidth * VIEW_MIN_FRAME_SCALE) / worldSize.width,
+    (fixedHeight * VIEW_MIN_FRAME_SCALE) / worldSize.height,
+  );
+  const maxZoom = Math.min(
+    (fixedWidth * VIEW_MAX_FRAME_SCALE) / worldSize.width,
+    (fixedHeight * VIEW_MAX_FRAME_SCALE) / worldSize.height,
+  );
+
+  return {
+    min: Math.max(0.001, Math.min(minZoom, maxZoom)),
+    max: Math.max(minZoom, maxZoom),
+  };
+}
+
+function clampZoom(zoom: number): number {
+  const limits = viewZoomLimits();
+  return Math.max(limits.min, Math.min(limits.max, zoom));
+}
+
+function clampViewTransform(candidate: SceneTransform): SceneTransform {
+  if (!puzzle) return candidate;
+  const fixedBounds = frameScreenBoundsForXform(fixedFrameTransform());
+  if (!fixedBounds) return candidate;
+
+  let next = { ...candidate, zoom: clampZoom(candidate.zoom) };
+  const contentBounds = frameScreenBoundsForXform(next);
+  if (!contentBounds) return next;
+
+  const fixedWidth = fixedBounds.maxX - fixedBounds.minX;
+  const fixedHeight = fixedBounds.maxY - fixedBounds.minY;
+  const contentWidth = contentBounds.maxX - contentBounds.minX;
+  const contentHeight = contentBounds.maxY - contentBounds.minY;
+  const fixedCenterX = (fixedBounds.minX + fixedBounds.maxX) / 2;
+  const fixedCenterY = (fixedBounds.minY + fixedBounds.maxY) / 2;
+  const contentCenterX = (contentBounds.minX + contentBounds.maxX) / 2;
+  const contentCenterY = (contentBounds.minY + contentBounds.maxY) / 2;
+
+  let dx = 0;
+  if (contentWidth <= fixedWidth) {
+    dx = fixedCenterX - contentCenterX;
+  } else if (contentBounds.minX > fixedBounds.minX) {
+    dx = fixedBounds.minX - contentBounds.minX;
+  } else if (contentBounds.maxX < fixedBounds.maxX) {
+    dx = fixedBounds.maxX - contentBounds.maxX;
+  }
+
+  let dy = 0;
+  if (contentHeight <= fixedHeight) {
+    dy = fixedCenterY - contentCenterY;
+  } else if (contentBounds.minY > fixedBounds.minY) {
+    dy = fixedBounds.minY - contentBounds.minY;
+  } else if (contentBounds.maxY < fixedBounds.maxY) {
+    dy = fixedBounds.maxY - contentBounds.maxY;
+  }
+
+  next = { ...next, panX: next.panX + dx, panY: next.panY + dy };
+  return next;
+}
+
+function rubberBandOverflow(overflow: number, referenceSize: number): number {
+  if (Math.abs(overflow) < 1e-6) return 0;
+  const size = Math.max(1, referenceSize);
+  return (overflow * VIEW_OVERSCROLL_FACTOR) / (1 + Math.abs(overflow) / size);
+}
+
+function elasticViewTransform(candidate: SceneTransform): SceneTransform {
+  const clamped = clampViewTransform(candidate);
+  const fixedBounds = frameScreenBoundsForXform(fixedFrameTransform());
+  if (!fixedBounds) return clamped;
+
+  const fixedWidth = fixedBounds.maxX - fixedBounds.minX;
+  const fixedHeight = fixedBounds.maxY - fixedBounds.minY;
+  return {
+    ...clamped,
+    panX: clamped.panX + rubberBandOverflow(candidate.panX - clamped.panX, fixedWidth),
+    panY: clamped.panY + rubberBandOverflow(candidate.panY - clamped.panY, fixedHeight),
+  };
+}
+
+function cancelViewRebound(): void {
+  if (viewReboundFrameId === null) return;
+  window.cancelAnimationFrame(viewReboundFrameId);
+  viewReboundFrameId = null;
+}
+
+function easeOutCubicLocal(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function animateViewTo(
+  target: SceneTransform,
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+): void {
+  cancelViewRebound();
+  const start = sceneXform;
+  const targetXform = clampViewTransform(target);
+  const startTime = performance.now();
+
+  function tick(now: number): void {
+    const t = Math.min(1, (now - startTime) / VIEW_REBOUND_MS);
+    const eased = easeOutCubicLocal(t);
+    sceneXform = {
+      ...start,
+      panX: start.panX + (targetXform.panX - start.panX) * eased,
+      panY: start.panY + (targetXform.panY - start.panY) * eased,
+      zoom: start.zoom + (targetXform.zoom - start.zoom) * eased,
+    };
+    updateTimerPosition();
+    render(ctx, canvas);
+
+    if (t < 1) {
+      viewReboundFrameId = window.requestAnimationFrame(tick);
+    } else {
+      viewReboundFrameId = null;
+      sceneXform = targetXform;
+      updateTimerPosition();
+      render(ctx, canvas);
+    }
+  }
+
+  viewReboundFrameId = window.requestAnimationFrame(tick);
+}
+
+function reboundViewIntoBounds(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+  const target = clampViewTransform(sceneXform);
+  if (
+    Math.abs(target.panX - sceneXform.panX) < 0.5
+    && Math.abs(target.panY - sceneXform.panY) < 0.5
+    && Math.abs(target.zoom - sceneXform.zoom) < 1e-4
+  ) {
+    sceneXform = target;
+    updateTimerPosition();
+    render(ctx, canvas);
+    return;
+  }
+  animateViewTo(target, ctx, canvas);
+}
+
+function drawFixedFrame(ctx: CanvasRenderingContext2D): void {
+  if (!puzzle) return;
+  const frame = puzzle.framePolygon;
+  const verts = frame.vertices;
+  if (verts.length < 3) return;
+
+  const xform = fixedFrameTransform();
+  ctx.save();
+  applyToCtx(ctx, xform);
+
+  ctx.beginPath();
+  ctx.moveTo(verts[0].x, verts[0].y);
+  for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(232, 220, 200, 0.3)';
+  ctx.fill();
+
+  ctx.strokeStyle = '#3f3320';
+  ctx.lineWidth = 4 / xform.zoom;
+  ctx.setLineDash([8 / xform.zoom, 4 / xform.zoom]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.restore();
+}
+
+function clipToFixedFrame(ctx: CanvasRenderingContext2D): void {
+  if (!puzzle) return;
+  const pts = frameScreenPoints(fixedFrameTransform());
+  if (pts.length < 3) return;
+
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.clip();
+}
+
+function drawFrameInterior(
+  ctx: CanvasRenderingContext2D,
+  frameTilePolys: Polygon[],
+): void {
+  if (!gameStarted || frameTilePolys.length === 0) return;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(232, 220, 200, 0.12)';
+  for (const ftp of frameTilePolys) {
+    ctx.fill(buildPiecePath(ftp));
+  }
+
+  if (curvedEdges) {
+    drawFrameTileBoundary(ctx, frameTilePolys);
+  } else {
+    drawBoundaryLoops(ctx, buildBoundaryLoops(frameTilePolys));
+  }
   ctx.restore();
 }
 
@@ -579,12 +813,29 @@ function drawMarquee(ctx: CanvasRenderingContext2D, marquee: MarqueeInfo): void 
   ctx.restore();
 }
 
-function formatElapsed(ms: number): string {
+function elapsedParts(ms: number): {
+  hours: number;
+  minutes: number;
+  seconds: number;
+  millis: number;
+} {
   const totalMs = Math.max(0, Math.floor(ms));
-  const hours = Math.floor(totalMs / 3_600_000);
-  const minutes = Math.floor((totalMs % 3_600_000) / 60_000);
-  const seconds = Math.floor((totalMs % 60_000) / 1000);
-  const millis = totalMs % 1000;
+  return {
+    hours: Math.floor(totalMs / 3_600_000),
+    minutes: Math.floor((totalMs % 3_600_000) / 60_000),
+    seconds: Math.floor((totalMs % 60_000) / 1000),
+    millis: totalMs % 1000,
+  };
+}
+
+function formatElapsedFull(ms: number): string {
+  const { hours, minutes, seconds, millis } = elapsedParts(ms);
+  const msText = String(millis).padStart(3, '0');
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${msText}`;
+}
+
+function formatElapsedCompact(ms: number): string {
+  const { hours, minutes, seconds, millis } = elapsedParts(ms);
   const msText = String(millis).padStart(3, '0');
   if (hours > 0) {
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${msText}`;
@@ -613,7 +864,8 @@ function ensureTimerElement(): HTMLDivElement {
 
 function updateTimerPosition(): void {
   const timer = ensureTimerElement();
-  const bounds = frameScreenBounds();
+  const xform = initialXform ?? sceneXform;
+  const bounds = frameScreenBoundsForXform(xform);
   if (!puzzle || !bounds || (!gameStarted && elapsedMs === 0)) {
     timer.classList.add('hidden');
     return;
@@ -670,7 +922,7 @@ function buildFlipSeparator(value: string): HTMLSpanElement {
 
 function updateTimerDom(): void {
   const timer = ensureTimerElement();
-  const text = formatElapsed(currentElapsedMs());
+  const text = formatElapsedFull(currentElapsedMs());
 
   if (timer.dataset.format !== text.replace(/\d/g, '0')) {
     timer.innerHTML = '';
@@ -708,13 +960,15 @@ function finishTimerAfterFlip(): void {
   }, 430);
 }
 
-function frameScreenPoints(): Point[] {
+function frameScreenPoints(xform?: SceneTransform): Point[] {
   if (!puzzle) return [];
-  return puzzle.framePolygon.vertices.map((v) => sceneToScreen(sceneXform, v.x, v.y));
+  return puzzle.framePolygon.vertices.map((v) =>
+    sceneToScreen(xform ?? fixedFrameTransform(), v.x, v.y),
+  );
 }
 
-function frameScreenBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  const pts = frameScreenPoints();
+function frameScreenBoundsForXform(xform: SceneTransform): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const pts = frameScreenPoints(xform);
   if (pts.length === 0) return null;
   return pts.reduce(
     (acc, p) => ({
@@ -725,6 +979,10 @@ function frameScreenBounds(): { minX: number; minY: number; maxX: number; maxY: 
     }),
     { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
   );
+}
+
+function frameScreenBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  return frameScreenBoundsForXform(initialXform ?? sceneXform);
 }
 
 function getStartButtonHitCircle(): { x: number; y: number; r: number } | null {
@@ -858,6 +1116,93 @@ function drawTrashDropZone(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElem
   ctx.moveTo(left + iconW * 0.67, top + iconH * 0.28);
   ctx.lineTo(left + iconW * 0.67, top + iconH * 0.72);
   ctx.stroke();
+  ctx.restore();
+}
+
+function getPanToolRect(canvas: HTMLCanvasElement): {
+  x: number;
+  y: number;
+  size: number;
+} {
+  const { w, h } = canvasLogicalSize(canvas);
+  const size = TRASH_ZONE_SIZE;
+  return {
+    x: w - TRASH_ZONE_MARGIN - size,
+    y: h - TRASH_ZONE_MARGIN - size * 2 - 8,
+    size,
+  };
+}
+
+function isInPanToolZone(canvasPt: Point, canvas: HTMLCanvasElement): boolean {
+  const rect = getPanToolRect(canvas);
+  return (
+    canvasPt.x >= rect.x
+    && canvasPt.x <= rect.x + rect.size
+    && canvasPt.y >= rect.y
+    && canvasPt.y <= rect.y + rect.size
+  );
+}
+
+function drawPanTool(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+  if (!gameStarted || won) return;
+  const rect = getPanToolRect(canvas);
+  const cx = rect.x + rect.size / 2;
+  const cy = rect.y + rect.size / 2;
+
+  ctx.save();
+
+  ctx.fillStyle = panMode
+    ? 'rgba(70, 130, 200, 0.22)'
+    : 'rgba(245, 238, 224, 0.72)';
+  ctx.strokeStyle = panMode
+    ? 'rgba(40, 90, 170, 0.95)'
+    : 'rgba(91, 63, 31, 0.62)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.roundRect(rect.x, rect.y, rect.size, rect.size, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = panMode ? '#285aaa' : '#5b3f1f';
+  ctx.fillStyle = panMode ? '#285aaa' : '#5b3f1f';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const s = rect.size / 64;
+
+  ctx.beginPath();
+  ctx.moveTo(cx - 10 * s, cy + 8 * s);
+  ctx.lineTo(cx - 10 * s, cy - 12 * s);
+  ctx.quadraticCurveTo(cx - 10 * s, cy - 17 * s, cx - 5 * s, cy - 17 * s);
+  ctx.quadraticCurveTo(cx, cy - 17 * s, cx, cy - 12 * s);
+  ctx.lineTo(cx, cy - 3 * s);
+  ctx.lineTo(cx, cy - 17 * s);
+  ctx.quadraticCurveTo(cx, cy - 22 * s, cx + 5 * s, cy - 22 * s);
+  ctx.quadraticCurveTo(cx + 10 * s, cy - 22 * s, cx + 10 * s, cy - 17 * s);
+  ctx.lineTo(cx + 10 * s, cy - 3 * s);
+  ctx.lineTo(cx + 10 * s, cy - 14 * s);
+  ctx.quadraticCurveTo(cx + 10 * s, cy - 18 * s, cx + 15 * s, cy - 18 * s);
+  ctx.quadraticCurveTo(cx + 20 * s, cy - 18 * s, cx + 20 * s, cy - 13 * s);
+  ctx.lineTo(cx + 20 * s, cy + 5 * s);
+  ctx.quadraticCurveTo(cx + 20 * s, cy + 18 * s, cx + 8 * s, cy + 21 * s);
+  ctx.lineTo(cx - 2 * s, cy + 21 * s);
+  ctx.quadraticCurveTo(cx - 11 * s, cy + 21 * s, cx - 17 * s, cy + 14 * s);
+  ctx.lineTo(cx - 25 * s, cy + 5 * s);
+  ctx.quadraticCurveTo(cx - 28 * s, cy + 1 * s, cx - 24 * s, cy - 2 * s);
+  ctx.quadraticCurveTo(cx - 20 * s, cy - 5 * s, cx - 16 * s, cy - 1 * s);
+  ctx.lineTo(cx - 10 * s, cy + 8 * s);
+  ctx.stroke();
+
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 3 * s);
+  ctx.lineTo(cx, cy + 7 * s);
+  ctx.moveTo(cx + 10 * s, cy - 3 * s);
+  ctx.lineTo(cx + 10 * s, cy + 7 * s);
+  ctx.stroke();
+
   ctx.restore();
 }
 
@@ -1509,7 +1854,7 @@ function showVictoryOverlay(): void {
   h2.textContent = 'Puzzle Complete!';
 
   const p = document.createElement('p');
-  p.textContent = `Congratulations! You solved the puzzle in ${formatElapsed(elapsedMs)}.`;
+  p.textContent = `Congratulations! You solved the puzzle in ${formatElapsedFull(elapsedMs)}.`;
 
   const actions = document.createElement('div');
   actions.className = 'victory-actions';
@@ -1602,6 +1947,7 @@ function showSolution(
 
 function doReset(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
   if (!initialJSON) return;
+  cancelViewRebound();
   anim.cancelAll();
   puzzle = importPuzzle(initialJSON);
   won = false;
@@ -1667,7 +2013,7 @@ function createAchievementImageCanvas(sourceCanvas: HTMLCanvasElement): HTMLCanv
     h: 900,
   });
 
-  drawAchievementTime(ctx, formatElapsed(elapsedMs || currentElapsedMs()), out.width / 2, 1380);
+  drawAchievementTime(ctx, formatElapsedCompact(elapsedMs || currentElapsedMs()), out.width / 2, 1380);
 
   return out;
 }
@@ -1873,6 +2219,18 @@ function onPointerDown(
 ): void {
   if (!puzzle) return;
   const model = puzzle;
+  cancelViewRebound();
+
+  if (e.button === 1) {
+    isPanning = true;
+    const rect = canvas.getBoundingClientRect();
+    panStartX = e.clientX - rect.left;
+    panStartY = e.clientY - rect.top;
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = 'grabbing';
+    e.preventDefault();
+    return;
+  }
 
   if (e.button === 2 || (e.button === 0 && e.shiftKey)) {
     e.preventDefault();
@@ -1881,8 +2239,16 @@ function onPointerDown(
 
   if (e.button !== 0) return;
 
+  const canvasPt = getCanvasPoint(e, canvas);
+  if (isInPanToolZone(canvasPt, canvas)) {
+    panMode = !panMode;
+    canvas.style.cursor = panMode ? 'grab' : '';
+    e.preventDefault();
+    render(ctx, canvas);
+    return;
+  }
+
   if (!gameStarted) {
-    const canvasPt = getCanvasPoint(e, canvas);
     const button = getStartButtonHitCircle();
     if (button) {
       const dx = canvasPt.x - button.x;
@@ -1891,6 +2257,17 @@ function onPointerDown(
         startPuzzleTimer(ctx, canvas);
       }
     }
+    e.preventDefault();
+    return;
+  }
+
+  if (panMode) {
+    isPanning = true;
+    const rect = canvas.getBoundingClientRect();
+    panStartX = e.clientX - rect.left;
+    panStartY = e.clientY - rect.top;
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = 'grabbing';
     e.preventDefault();
     return;
   }
@@ -1998,6 +2375,25 @@ function onPointerMove(
   ctx: CanvasRenderingContext2D,
 ): void {
   if (!puzzle) return;
+
+  if (isPanning) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const dx = mx - panStartX;
+    const dy = my - panStartY;
+    sceneXform = elasticViewTransform({
+      ...sceneXform,
+      panX: sceneXform.panX + dx,
+      panY: sceneXform.panY + dy,
+    });
+    panStartX = mx;
+    panStartY = my;
+    updateTimerPosition();
+    render(ctx, canvas);
+    return;
+  }
+
   const scenePt = toScene(e, canvas);
 
   const rdInfo = rotateDragInfo;
@@ -2102,6 +2498,13 @@ function onPointerUp(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
 ): void {
+  if (isPanning) {
+    isPanning = false;
+    canvas.style.cursor = panMode ? 'grab' : '';
+    reboundViewIntoBounds(ctx, canvas);
+    return;
+  }
+
   if (rotateDragInfo !== null) {
     rotateDragInfo = null;
     checkWinAndRender(ctx, canvas);
@@ -2178,6 +2581,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  canvas.addEventListener('wheel', (e: WheelEvent) => {
+    e.preventDefault();
+    cancelViewRebound();
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const zoomFactor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const newZoom = clampZoom(sceneXform.zoom * zoomFactor);
+
+    // Zoom centered on mouse cursor: keep the scene point under cursor fixed
+    const scenePtBefore = screenToScene(sceneXform, mx, my);
+    const zoomedXform = { ...sceneXform, zoom: newZoom };
+    const scenePtAfter = screenToScene(zoomedXform, mx, my);
+    sceneXform = clampViewTransform({
+      ...zoomedXform,
+      panX: zoomedXform.panX + (scenePtAfter.x - scenePtBefore.x) * newZoom,
+      panY: zoomedXform.panY + (scenePtAfter.y - scenePtBefore.y) * newZoom,
+    });
+
+    updateTimerPosition();
+    render(renderCtx, canvas);
+  }, { passive: false });
 
   canvas.addEventListener('dragover', (e) => {
     if (!gameStarted) return;
