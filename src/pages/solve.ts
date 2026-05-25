@@ -1665,6 +1665,66 @@ function exportPuzzleRaw(id: string): string | null {
   }
 }
 
+interface PresetPuzzle {
+  id: string;
+  name: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  pieceCount: number;
+  tileType: 'hat' | 'spectre';
+  url: string;
+}
+
+const PRESET_PUZZLES: readonly PresetPuzzle[] = [
+  { id: 'mpit63foyl87', name: 'Spectre', difficulty: 'easy', pieceCount: 3, tileType: 'spectre', url: '/puzzles/mpit63foyl87.json' },
+  { id: 'mpi5ufjsovim', name: 'Spectre', difficulty: 'easy', pieceCount: 6, tileType: 'spectre', url: '/puzzles/mpi5ufjsovim.json' },
+  { id: 'mpii3i4qaho4', name: 'Hat', difficulty: 'medium', pieceCount: 14, tileType: 'hat', url: '/puzzles/mpii3i4qaho4.json' },
+  { id: 'mpjuciu10apn', name: 'Spectre', difficulty: 'medium', pieceCount: 19, tileType: 'spectre', url: '/puzzles/mpjuciu10apn.json' },
+  { id: 'mpisn1rmv4q1', name: 'Spectre', difficulty: 'medium', pieceCount: 22, tileType: 'spectre', url: '/puzzles/mpisn1rmv4q1.json' },
+  { id: 'mpiibwyjd8qi', name: 'Hat', difficulty: 'hard', pieceCount: 28, tileType: 'hat', url: '/puzzles/mpiibwyjd8qi.json' },
+  { id: 'mpihyif5ba3u', name: 'Hat', difficulty: 'hard', pieceCount: 30, tileType: 'hat', url: '/puzzles/mpihyif5ba3u.json' },
+  { id: 'mpisupbucazn', name: 'Spectre', difficulty: 'hard', pieceCount: 42, tileType: 'spectre', url: '/puzzles/mpisupbucazn.json' },
+];
+
+function renderPresetList(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+): void {
+  const select = document.getElementById('preset-select') as HTMLSelectElement | null;
+  if (!select) return;
+
+  select.innerHTML = '<option value="" disabled selected>Choose a puzzle...</option>';
+
+  for (const preset of PRESET_PUZZLES) {
+    const opt = document.createElement('option');
+    opt.value = preset.id;
+    opt.textContent = `${preset.name}  ·  ${preset.difficulty}`;
+    select.appendChild(opt);
+  }
+
+  select.addEventListener('change', () => {
+    const id = select.value;
+    const preset = PRESET_PUZZLES.find((p) => p.id === id);
+    if (!preset) return;
+
+    fetch(preset.url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((json) => {
+        const loaded = importPuzzle(json);
+        loadPuzzleFromModel(loaded, json, ctx, canvas);
+      })
+      .catch((e) => {
+        console.error('[Preset] Failed to load:', e);
+        window.alert('Failed to load preset puzzle: ' + (e instanceof Error ? e.message : String(e)));
+      })
+      .finally(() => {
+        select.selectedIndex = 0;
+      });
+  });
+}
+
 function extractCurveMeta(json: string): void {
   try {
     const parsed = JSON.parse(json);
@@ -2549,6 +2609,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const fileInput = document.getElementById('file-input') as HTMLInputElement;
 
   resizeCanvas(canvas);
+  renderPresetList(renderCtx, canvas);
   renderPuzzleList(renderCtx, canvas);
 
   window.addEventListener('resize', () => {
