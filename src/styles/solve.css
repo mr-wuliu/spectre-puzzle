@@ -289,6 +289,43 @@
   margin-top: var(--spacing-md);
 }
 
+/* ---- Preset puzzles ---- */
+.preset-section {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.preset-select {
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: 0.8125rem;
+  font-family: inherit;
+  color: var(--color-text);
+  background-color: var(--color-surface-hover);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b6914' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.preset-select:hover {
+  border-color: var(--color-accent);
+  background-color: var(--color-surface);
+}
+
+.preset-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(139, 105, 20, 0.25);
+}
+
 /* ---- Puzzle list ---- */
 #puzzle-list {
   display: flex;
